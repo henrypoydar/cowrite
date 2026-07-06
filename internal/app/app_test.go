@@ -3,11 +3,14 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/henrypoydar/cowrite/internal/buffer"
 	"github.com/henrypoydar/cowrite/internal/filesync"
@@ -354,9 +357,25 @@ func TestWordCount(t *testing.T) {
 	}
 }
 
+func TestCursorShapePerMode(t *testing.T) {
+	// tests run without a TTY, so lipgloss strips styling unless forced
+	lipgloss.SetColorProfile(termenv.ANSI)
+	m, _ := newModel(t, "hello\n")
+	if v := m.View(); !strings.Contains(v, "\x1b[7m") {
+		t.Error("normal mode should draw a reverse-video block cursor")
+	}
+	press(m, "i")
+	// lipgloss may emit the underline attribute as "4" or doubled "4;4"
+	if v := m.View(); !strings.Contains(v, "\x1b[4m") && !strings.Contains(v, "\x1b[4;") {
+		t.Error("insert mode should draw an underline cursor")
+	}
+}
+
+var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
 func TestViewRenders(t *testing.T) {
 	m, _ := newModel(t, "hello world this is a long line that wraps\n")
-	v := m.View()
+	v := ansiRE.ReplaceAllString(m.View(), "")
 	if !strings.Contains(v, "hello world") {
 		t.Errorf("view missing text:\n%s", v)
 	}

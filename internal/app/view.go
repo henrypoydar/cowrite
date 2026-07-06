@@ -50,7 +50,7 @@ func (m *Model) View() string {
 		if r == cursorRow {
 			cc = cursorCol
 		}
-		b.WriteString(renderRow(text, styles, selFrom, selTo, cc))
+		b.WriteString(renderRow(text, styles, selFrom, selTo, cc, m.eng.Mode() == vim.ModeInsert))
 		b.WriteByte('\n')
 	}
 	b.WriteString(m.statusLine())
@@ -60,9 +60,11 @@ func (m *Model) View() string {
 }
 
 // renderRow paints one display row, grouping runs of runes that share the
-// same (style, selected) attributes. The cursor cell inverts whatever it
-// lands on so it stays visible inside a selection.
-func renderRow(text []rune, styles []render.Style, selFrom, selTo, cursorCol int) string {
+// same (style, selected) attributes. The cursor is a reverse-video block
+// in normal mode — inverting whatever it lands on so it stays visible
+// inside a selection — and an underline in insert mode, the terminal
+// convention for "text goes here".
+func renderRow(text []rune, styles []render.Style, selFrom, selTo, cursorCol int, insertCursor bool) string {
 	var b strings.Builder
 	flush := func(from, to int) {
 		for from < to {
@@ -76,6 +78,9 @@ func renderRow(text []rune, styles []render.Style, selFrom, selTo, cursorCol int
 	}
 	styled := func(i int) lipgloss.Style {
 		s := mdStyles[styles[i]]
+		if i == cursorCol && insertCursor {
+			return s.Underline(true)
+		}
 		sel := i >= selFrom && i < selTo
 		if sel != (i == cursorCol) { // selection or cursor, not both
 			s = s.Reverse(true)
@@ -101,7 +106,11 @@ func renderRow(text []rune, styles []render.Style, selFrom, selTo, cursorCol int
 		i = to
 	}
 	if cursorCol >= len(text) && cursorCol >= 0 {
-		b.WriteString(lipgloss.NewStyle().Reverse(true).Render(" "))
+		eol := lipgloss.NewStyle().Reverse(true)
+		if insertCursor {
+			eol = lipgloss.NewStyle().Underline(true)
+		}
+		b.WriteString(eol.Render(" "))
 	}
 	return b.String()
 }
