@@ -100,23 +100,32 @@ func TestInsertSessionIsOneUndo(t *testing.T) {
 }
 
 func TestAutosaveDebounce(t *testing.T) {
-	m, path := newModel(t, "")
-	press(m, "idraft\x1b")
+	m, path := newModel(t, "seed\n")
+	press(m, "Amore\x1b")
 
 	// stale tick (superseded generation) must not save
 	m.Update(saveTickMsg(m.editGen - 1))
-	if _, err := os.Stat(path); err == nil {
-		t.Fatal("stale tick saved the file")
+	if data, _ := os.ReadFile(path); string(data) != "seed\n" {
+		t.Fatalf("stale tick saved the file: %q", data)
 	}
 	// current tick saves
 	m.Update(saveTickMsg(m.editGen))
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != "draft\n" {
+	if data, _ := os.ReadFile(path); string(data) != "seedmore\n" {
 		t.Errorf("file = %q", data)
 	}
+}
+
+func TestEagerFirstSaveOfEmptyBuffer(t *testing.T) {
+	m, path := newModel(t, "")
+	press(m, "if") // a single keystroke, no debounce tick yet
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal("first edit of an empty buffer should save immediately")
+	}
+	if string(data) != "f\n" {
+		t.Errorf("file = %q", data)
+	}
+	_ = m
 }
 
 func TestMergeCleanBuffer(t *testing.T) {
@@ -212,6 +221,71 @@ func TestQuitSavesByDefault(t *testing.T) {
 	}
 	if string(data) != "abc\n" {
 		t.Errorf(":q should flush: %q", data)
+	}
+}
+
+func TestVisualModeOps(t *testing.T) {
+	m, _ := newModel(t, "one two three\nnext line\n")
+
+	// charwise: select "one two" and delete it
+	press(m, "vwed")
+	if got := m.buf.Lines()[0]; got != " three" {
+		t.Errorf("vwed: %q", got)
+	}
+	if m.visual.active {
+		t.Error("selection should end after the operator")
+	}
+
+	// linewise: V selects the whole line
+	press(m, "Vd")
+	if got := m.buf.Contents(); got != "next line" {
+		t.Errorf("Vd: %q", got)
+	}
+}
+
+func TestTextObjects(t *testing.T) {
+	m, _ := newModel(t, "alpha beta gamma\n\npara two here\n\npara three\n")
+
+	press(m, "wdiw") // cursor onto beta, delete inner word
+	if got := m.buf.Lines()[0]; got != "alpha  gamma" {
+		t.Errorf("diw: %q", got)
+	}
+	press(m, "udaw") // undo, then delete a word (with trailing space)
+	if got := m.buf.Lines()[0]; got != "alpha gamma" {
+		t.Errorf("daw: %q", got)
+	}
+
+	m, _ = newModel(t, "para one\nstill one\n\npara two\n")
+	press(m, "dip") // delete the whole first paragraph, linewise
+	if got := m.buf.Contents(); got != "\npara two" {
+		t.Errorf("dip: %q", got)
+	}
+}
+
+func TestParagraphMotionAndJoin(t *testing.T) {
+	m, _ := newModel(t, "para one\nstill one\n\npara two\n")
+	press(m, "}")
+	if m.cursor.Line != 2 {
+		t.Errorf("} landed on line %d, want 2 (the blank)", m.cursor.Line)
+	}
+	press(m, "gg")
+	press(m, "J")
+	if got := m.buf.Lines()[0]; got != "para one still one" {
+		t.Errorf("J: %q", got)
+	}
+}
+
+func TestDotRepeat(t *testing.T) {
+	m, _ := newModel(t, "aaa bbb ccc\n")
+	press(m, "dw..") // delete word, repeat twice
+	if got := m.buf.Contents(); got != "" {
+		t.Errorf("dw..: %q", got)
+	}
+
+	m, _ = newModel(t, "x\n")
+	press(m, "A!\x1b.") // append '!', repeat the whole insert session
+	if got := m.buf.Contents(); got != "x!!" {
+		t.Errorf("A!.: %q", got)
 	}
 }
 

@@ -7,19 +7,31 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/henrypoydar/cowrite/internal/buffer"
+	"github.com/henrypoydar/cowrite/internal/render"
 	"github.com/henrypoydar/cowrite/internal/vim"
 )
 
 var (
-	cursorStyle = lipgloss.NewStyle().Reverse(true)
 	statusStyle = lipgloss.NewStyle().Reverse(true)
 	tildeStyle  = lipgloss.NewStyle().Faint(true)
+
+	mdStyles = map[render.Style]lipgloss.Style{
+		render.SText:    lipgloss.NewStyle(),
+		render.SHeading: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6")),
+		render.SMarker:  lipgloss.NewStyle().Faint(true),
+		render.SStrong:  lipgloss.NewStyle().Bold(true),
+		render.SEmph:    lipgloss.NewStyle().Italic(true),
+		render.SCode:    lipgloss.NewStyle().Foreground(lipgloss.Color("3")),
+		render.SQuote:   lipgloss.NewStyle().Italic(true).Faint(true),
+	}
 )
 
 func (m *Model) View() string {
 	if m.width == 0 || m.height == 0 {
 		return ""
 	}
+	deco := render.Decorate(m.buf)
 	cursorRow, cursorCol := m.layout.PosToRow(m.cursor)
 
 	var b strings.Builder
@@ -32,11 +44,13 @@ func (m *Model) View() string {
 		}
 		row := m.layout.Rows[r]
 		text := m.buf.Line(row.Line)[row.Start:row.End]
+		styles := deco[row.Line][row.Start:row.End]
+		selFrom, selTo := m.selectionInRow(row)
+		cc := -1
 		if r == cursorRow {
-			b.WriteString(withCursor(text, cursorCol))
-		} else {
-			b.WriteString(string(text))
+			cc = cursorCol
 		}
+		b.WriteString(renderRow(text, styles, selFrom, selTo, cc))
 		b.WriteByte('\n')
 	}
 	b.WriteString(m.statusLine())
@@ -45,11 +59,88 @@ func (m *Model) View() string {
 	return b.String()
 }
 
-func withCursor(text []rune, col int) string {
-	if col >= len(text) {
-		return string(text) + cursorStyle.Render(" ")
+// renderRow paints one display row, grouping runs of runes that share the
+// same (style, selected) attributes. The cursor cell inverts whatever it
+// lands on so it stays visible inside a selection.
+func renderRow(text []rune, styles []render.Style, selFrom, selTo, cursorCol int) string {
+	var b strings.Builder
+	flush := func(from, to int) {
+		for from < to {
+			run := from + 1
+			for run < to && styles[run] == styles[from] {
+				run++
+			}
+			b.WriteString(mdStyles[styles[from]].Render(string(text[from:run])))
+			from = run
+		}
 	}
-	return string(text[:col]) + cursorStyle.Render(string(text[col])) + string(text[col+1:])
+	styled := func(i int) lipgloss.Style {
+		s := mdStyles[styles[i]]
+		sel := i >= selFrom && i < selTo
+		if sel != (i == cursorCol) { // selection or cursor, not both
+			s = s.Reverse(true)
+		}
+		return s
+	}
+
+	i := 0
+	for i < len(text) {
+		if (i >= selFrom && i < selTo) || i == cursorCol {
+			b.WriteString(styled(i).Render(string(text[i])))
+			i++
+			continue
+		}
+		to := len(text)
+		if i < selFrom {
+			to = min(to, selFrom)
+		}
+		if i < cursorCol {
+			to = min(to, cursorCol)
+		}
+		flush(i, to)
+		i = to
+	}
+	if cursorCol >= len(text) && cursorCol >= 0 {
+		b.WriteString(lipgloss.NewStyle().Reverse(true).Render(" "))
+	}
+	return b.String()
+}
+
+// selectionInRow returns the selected rune span [from,to) within the row,
+// or (-1,-1) when nothing in the row is selected.
+func (m *Model) selectionInRow(row render.Row) (int, int) {
+	start, end, ok := m.selectionSpan()
+	if !ok {
+		return -1, -1
+	}
+	if row.Line < start.Line || row.Line > end.Line {
+		return -1, -1
+	}
+	from, to := 0, row.End-row.Start
+	if !m.visual.linewise {
+		if row.Line == start.Line {
+			from = max(0, start.Col-row.Start)
+		}
+		if row.Line == end.Line {
+			to = min(to, end.Col+1-row.Start)
+		}
+	}
+	if from >= to && !(m.visual.linewise && row.Start == row.End) {
+		return -1, -1
+	}
+	return from, to
+}
+
+// selectionSpan orders the visual anchor and cursor. Both ends inclusive.
+func (m *Model) selectionSpan() (buffer.Pos, buffer.Pos, bool) {
+	if !m.visual.active {
+		return buffer.Pos{}, buffer.Pos{}, false
+	}
+	a, c := m.visual.anchor, m.cursor
+	if c.Before(a) {
+		a, c = c, a
+	}
+	return a, c, true
 }
 
 func (m *Model) statusLine() string {
@@ -57,7 +148,11 @@ func (m *Model) statusLine() string {
 	if m.buf.Dirty() {
 		name += " [+]"
 	}
-	left := fmt.Sprintf(" %s  %s", m.eng.Mode(), name)
+	mode := m.eng.Mode().String()
+	if m.visual.active && m.visual.linewise {
+		mode = "V-LINE"
+	}
+	left := fmt.Sprintf(" %s  %s", mode, name)
 	right := fmt.Sprintf("%d:%d ", m.cursor.Line+1, m.cursor.Col+1)
 	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {

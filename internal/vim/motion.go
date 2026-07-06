@@ -21,15 +21,20 @@ const (
 	MotionWordEnd
 	MotionFileStart
 	MotionFileEnd
-	MotionFind // f
-	MotionTill // t
-	MotionLine // whole-line target used by dd/cc/yy
+	MotionFind        // f
+	MotionTill        // t
+	MotionLine        // whole-line target used by dd/cc/yy
+	MotionParaForward // }
+	MotionParaBack    // {
+	MotionObjWord     // iw / aw text object
+	MotionObjPara     // ip / ap text object
 )
 
 type Motion struct {
 	Kind  MotionKind
 	Count int
 	Char  rune // target for f/t
+	Inner bool // i vs a for text objects
 }
 
 // Lines is the read-only buffer view motions resolve against.
@@ -119,8 +124,93 @@ func Resolve(m Motion, l Lines, cur buffer.Pos) Target {
 		return Target{Pos: buffer.Pos{Line: cur.Line, Col: col}, Inclusive: true}
 	case MotionLine:
 		return Target{Pos: buffer.Pos{Line: min(lastLine, cur.Line+n-1), Col: 0}, Linewise: true}
+	case MotionParaForward:
+		line := cur.Line
+		for range n {
+			line = nextBlank(l, line)
+		}
+		return Target{Pos: buffer.Pos{Line: line, Col: 0}}
+	case MotionParaBack:
+		line := cur.Line
+		for range n {
+			line = prevBlank(l, line)
+		}
+		return Target{Pos: buffer.Pos{Line: line, Col: 0}}
 	}
 	return Target{Pos: cur}
+}
+
+// nextBlank finds the next empty line after from (vim's }), or the last line.
+func nextBlank(l Lines, from int) int {
+	for i := from + 1; i < l.LineCount(); i++ {
+		if len(l.Line(i)) == 0 {
+			return i
+		}
+	}
+	return l.LineCount() - 1
+}
+
+// prevBlank finds the previous empty line before from (vim's {), or line 0.
+func prevBlank(l Lines, from int) int {
+	for i := from - 1; i >= 0; i-- {
+		if len(l.Line(i)) == 0 {
+			return i
+		}
+	}
+	return 0
+}
+
+// Object resolves a text object at cur to a [start,end) span. Word objects
+// are charwise; paragraph objects are linewise (end spans the last line).
+func Object(m Motion, l Lines, cur buffer.Pos) (start, end buffer.Pos, linewise bool) {
+	switch m.Kind {
+	case MotionObjWord:
+		line := l.Line(cur.Line)
+		if len(line) == 0 {
+			return cur, cur, false
+		}
+		col := min(cur.Col, len(line)-1)
+		c := class(line[col])
+		s, e := col, col+1
+		for s > 0 && class(line[s-1]) == c {
+			s--
+		}
+		for e < len(line) && class(line[e]) == c {
+			e++
+		}
+		if !m.Inner { // aw: take the trailing spaces, or leading if none trail
+			e2 := e
+			for e2 < len(line) && line[e2] == ' ' {
+				e2++
+			}
+			if e2 == e {
+				for s > 0 && line[s-1] == ' ' {
+					s--
+				}
+			}
+			e = e2
+		}
+		return buffer.Pos{Line: cur.Line, Col: s}, buffer.Pos{Line: cur.Line, Col: e}, false
+
+	case MotionObjPara:
+		blank := func(i int) bool { return len(l.Line(i)) == 0 }
+		last := l.LineCount() - 1
+		on := blank(cur.Line) // ip on a blank run selects the blank run
+		lo, hi := cur.Line, cur.Line
+		for lo > 0 && blank(lo-1) == on {
+			lo--
+		}
+		for hi < last && blank(hi+1) == on {
+			hi++
+		}
+		if !m.Inner && !on { // ap: include the trailing blank run
+			for hi < last && blank(hi+1) {
+				hi++
+			}
+		}
+		return buffer.Pos{Line: lo, Col: 0}, buffer.Pos{Line: hi, Col: len(l.Line(hi))}, true
+	}
+	return cur, cur, false
 }
 
 // class buckets a rune the way vim words do: whitespace, word characters

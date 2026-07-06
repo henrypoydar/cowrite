@@ -48,6 +48,14 @@ Gotchas:
    session and the agent's whole turn as separate single steps; `C-r`
    (send-keys `C-r`) restores.
 4. **Soft wrap reflow**: `tmux -L cwv resize-window -t main -x 28`, capture.
-5. **Cold-start race** (known edge, see DESIGN.md): on a fresh empty file,
-   an external write within the debounce window beats the user's first
-   unsaved words — disk-wins drops them. Expected under current policy.
+5. **Cold-start race** (mitigated, see DESIGN.md): on a fresh empty file
+   the first keystroke saves eagerly — `cat` the file ~150ms after typing
+   begins and it already holds the first character, so an agent that
+   reads-then-appends merges disjointly. A blind full-file overwrite still
+   takes conflicting lines; that's disk-wins policy, expected.
+6. **Decoration**: open a fixture with a heading, emphasis, inline code, a
+   list, a quote, and a fence; `capture-pane -e` shows the raw SGR codes
+   (heading bold+cyan, markers faint, code yellow).
+7. **Visual mode**: `vip` then capture with `-e` — the paragraph renders
+   reverse-video except the cursor cell, which inverts back to stay
+   visible; status bar reads V-LINE for linewise selections.

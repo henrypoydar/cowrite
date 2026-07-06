@@ -74,11 +74,13 @@ model state, so there's no locking.
 - **`:q` saves and quits.** In a continuous-save editor, refusing to quit
   because of unsaved changes is noise; the file is already current or about
   to be. `:q!` quits without the final save.
-- **Known edge — the cold-start race.** On a brand-new (or just-opened
-  empty) file, the user's first words and an agent write can both change
-  line 0 relative to an empty base within the 400ms debounce; disk-wins
-  then drops the user's in-flight text. Verified live. Mitigation candidate
-  for later: save immediately on the first edit of an empty buffer.
+- **The cold-start race, mitigated.** On a brand-new empty file there is
+  no base yet, so a user's first words and an agent write both claimed
+  line 0 and disk-wins dropped the user's text (verified live). Fix: the
+  very first edit of an empty buffer saves immediately, skipping the
+  debounce — an agent that reads-then-appends now merges disjointly
+  (re-verified live). An agent that blindly overwrites the whole file
+  still takes line 0; that's the disk-wins policy, not the race.
 - **Cursor width is rune-based** for now; grapheme clusters and east-asian
   widths via `rivo/uniseg` are a known future fix, not a v1 blocker.
 - **Trailing newline**: files are stored with one; the buffer strips it on
@@ -91,10 +93,12 @@ model state, so there's no locking.
 3. ~~**Soft wrap** — display-line layout and motions.~~
 4. ~~**Co-writing, clean case** — autosave + watcher + reload-when-clean.~~
 5. ~~**Co-writing, real case** — diff3 merge into a dirty buffer.~~
-6. **Decoration** — markdown styling pass (headings, emphasis, lists,
-   blockquotes, code fences).
-7. **Vim depth** — visual mode, registers beyond the unnamed one, text
-   objects (`ip` first — prose lives in paragraphs), `.` repeat.
+6. ~~**Decoration** — markdown styling pass (headings, emphasis, lists,
+   blockquotes, code fences).~~
+7. ~~**Vim depth** — visual mode (`v`/`V`), text objects (`iw`/`aw`/
+   `ip`/`ap`), paragraph motions (`{`/`}`), `J`, `.` repeat.~~ Named
+   registers deliberately deferred; the unnamed register covers prose
+   workflows.
 8. **Ship** — goreleaser, Homebrew tap.
 
 ## Testing

@@ -24,6 +24,12 @@ type register struct {
 	linewise bool
 }
 
+type visual struct {
+	active   bool
+	linewise bool
+	anchor   buffer.Pos
+}
+
 type (
 	extChangeMsg filesync.Change
 	saveTickMsg  int
@@ -43,8 +49,15 @@ type Model struct {
 	cursor        buffer.Pos
 	goal          int // visual column j/k aims for
 	reg           register
+	visual        visual
 	msg           string
 	editGen       int
+	eagerSave     bool // save on the very first edit: closes the new-file race
+
+	// dot-repeat: the last completed change as replayable commands
+	lastChange []vim.Cmd
+	rec        []vim.Cmd
+	recOpen    bool
 }
 
 func New(path string) (*Model, error) {
@@ -53,11 +66,12 @@ func New(path string) (*Model, error) {
 		return nil, err
 	}
 	m := &Model{
-		path: path,
-		buf:  buffer.New(content),
-		eng:  vim.New(),
-		fs:   filesync.NewEngine(path),
-		done: make(chan struct{}),
+		path:      path,
+		buf:       buffer.New(content),
+		eng:       vim.New(),
+		fs:        filesync.NewEngine(path),
+		done:      make(chan struct{}),
+		eagerSave: content == "",
 	}
 	m.fs.SetBase(m.buf.Lines())
 	m.changes, err = m.fs.Watch(m.done)
@@ -95,6 +109,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmds []tea.Cmd
 		for _, k := range translate(msg, m.eng.Mode()) {
 			for _, c := range m.eng.Feed(k) {
+				m.record(c)
 				if cmd := m.apply(c); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
@@ -217,6 +232,33 @@ func (m *Model) apply(c vim.Cmd) tea.Cmd {
 	case vim.CmdDelete, vim.CmdChange, vim.CmdYank:
 		return m.operate(c)
 
+	case vim.CmdEnterVisual:
+		m.visual = visual{active: true, linewise: c.Linewise, anchor: m.cursor}
+
+	case vim.CmdExitVisual:
+		m.visual.active = false
+
+	case vim.CmdSelectObject:
+		start, end, linewise := vim.Object(c.Motion, m.buf, m.cursor)
+		if start == end {
+			return nil
+		}
+		if linewise {
+			m.visual.linewise = true
+			m.visual.anchor = buffer.Pos{Line: start.Line, Col: 0}
+			m.cursor = m.clampNormal(buffer.Pos{Line: end.Line, Col: 0})
+		} else {
+			m.visual.anchor = start
+			m.cursor = m.clampNormal(buffer.Pos{Line: end.Line, Col: end.Col - 1})
+		}
+		m.setGoal()
+
+	case vim.CmdJoin:
+		return m.join()
+
+	case vim.CmdRepeat:
+		return m.repeatLast()
+
 	case vim.CmdPaste:
 		return m.paste(c.Before)
 
@@ -260,34 +302,30 @@ func (m *Model) move(mo vim.Motion) {
 	m.setGoal()
 }
 
-// operate applies d, c, or y over a resolved motion.
-func (m *Model) operate(c vim.Cmd) tea.Cmd {
+// operandRange resolves what an operator acts on — the visual selection,
+// a text object, or a motion — as a [start,end) span plus linewise-ness.
+func (m *Model) operandRange(c vim.Cmd) (buffer.Pos, buffer.Pos, bool) {
+	if c.Selection {
+		start, end, _ := m.selectionSpan()
+		m.visual.active = false
+		if m.visual.linewise {
+			return buffer.Pos{Line: start.Line, Col: 0},
+				buffer.Pos{Line: end.Line, Col: m.buf.LineLen(end.Line)}, true
+		}
+		end.Col = min(end.Col+1, m.buf.LineLen(end.Line)) // selection is inclusive
+		return start, end, false
+	}
+	if c.Motion.Kind == vim.MotionObjWord || c.Motion.Kind == vim.MotionObjPara {
+		return vim.Object(c.Motion, m.buf, m.cursor)
+	}
 	t := vim.Resolve(c.Motion, m.buf, m.cursor)
-
 	if t.Linewise {
 		lo, hi := m.cursor.Line, t.Pos.Line
 		if lo > hi {
 			lo, hi = hi, lo
 		}
-		text := strings.Join(m.buf.Lines()[lo:hi+1], "\n")
-		if c.Kind == vim.CmdYank {
-			m.reg = register{text: text, linewise: true}
-			return nil
-		}
-		m.reg = register{text: text, linewise: true}
-		if c.Kind == vim.CmdChange {
-			// cc: clear the lines but keep one empty line to type into
-			m.buf.BeginGroup(m.cursor)
-			m.buf.Replace(buffer.Pos{Line: lo, Col: 0}, buffer.Pos{Line: hi, Col: m.buf.LineLen(hi)}, "")
-			m.cursor = buffer.Pos{Line: lo, Col: 0}
-			return m.edited()
-		}
-		m.deleteLines(lo, hi)
-		m.cursor = m.clampNormal(buffer.Pos{Line: lo, Col: 0})
-		m.setGoal()
-		return m.edited()
+		return buffer.Pos{Line: lo, Col: 0}, buffer.Pos{Line: hi, Col: m.buf.LineLen(hi)}, true
 	}
-
 	start, end := m.cursor, t.Pos
 	if end.Before(start) {
 		start, end = end, start
@@ -295,28 +333,109 @@ func (m *Model) operate(c vim.Cmd) tea.Cmd {
 	if t.Inclusive {
 		end.Col = min(end.Col+1, m.buf.LineLen(end.Line))
 	}
+	return start, end, false
+}
+
+// operate applies d, c, or y over a selection, text object, or motion.
+func (m *Model) operate(c vim.Cmd) tea.Cmd {
+	start, end, linewise := m.operandRange(c)
 	if start == end {
 		if c.Kind == vim.CmdChange {
 			m.buf.BeginGroup(m.cursor)
 		}
 		return nil
 	}
-	text := m.buf.Slice(start, end)
-	m.reg = register{text: text}
+	m.reg = register{text: m.buf.Slice(start, end), linewise: linewise}
+
 	if c.Kind == vim.CmdYank {
 		m.cursor = m.clampNormal(start)
+		m.setGoal()
 		return nil
 	}
 	if c.Kind == vim.CmdChange {
+		// linewise change clears the lines but keeps one to type into
 		m.buf.BeginGroup(m.cursor)
 		m.buf.Replace(start, end, "")
 		m.cursor = start
+		m.setGoal()
+		return m.edited()
+	}
+	if linewise {
+		m.deleteLines(start.Line, end.Line)
+		m.cursor = m.clampNormal(buffer.Pos{Line: start.Line, Col: 0})
 	} else {
 		m.buf.Replace(start, end, "")
 		m.cursor = m.clampNormal(start)
 	}
 	m.setGoal()
 	return m.edited()
+}
+
+// join splices the next line onto the current one, vim J style: newline
+// and leading indent become a single space.
+func (m *Model) join() tea.Cmd {
+	line := m.cursor.Line
+	if line >= m.buf.LineCount()-1 {
+		return nil
+	}
+	next := m.buf.Line(line + 1)
+	indent := 0
+	for indent < len(next) && next[indent] == ' ' {
+		indent++
+	}
+	sep := " "
+	if len(next) == indent { // joining a blank line adds no space
+		sep = ""
+	}
+	start := buffer.Pos{Line: line, Col: m.buf.LineLen(line)}
+	m.buf.Replace(start, buffer.Pos{Line: line + 1, Col: indent}, sep)
+	m.cursor = m.clampNormal(start)
+	m.setGoal()
+	return m.edited()
+}
+
+// record accumulates commands into the dot register. Insert sessions are
+// captured whole (enter, keystrokes, exit); standalone changes replace the
+// register directly. Selection ops aren't repeatable — the selection is gone.
+func (m *Model) record(c vim.Cmd) {
+	switch c.Kind {
+	case vim.CmdEnterInsert:
+		m.rec, m.recOpen = []vim.Cmd{c}, true
+	case vim.CmdChange:
+		if c.Selection {
+			m.rec, m.recOpen = nil, false
+			return
+		}
+		m.rec, m.recOpen = []vim.Cmd{c}, true
+	case vim.CmdInsertText, vim.CmdNewline, vim.CmdBackspace:
+		if m.recOpen {
+			m.rec = append(m.rec, c)
+		}
+	case vim.CmdExitInsert:
+		if m.recOpen {
+			m.rec = append(m.rec, c)
+			m.lastChange = m.rec
+			m.recOpen = false
+		}
+	case vim.CmdDelete, vim.CmdPaste, vim.CmdJoin:
+		m.recOpen = false
+		if !c.Selection {
+			m.lastChange = []vim.Cmd{c}
+		}
+	}
+}
+
+func (m *Model) repeatLast() tea.Cmd {
+	if len(m.lastChange) == 0 {
+		return nil
+	}
+	var last tea.Cmd
+	for _, c := range m.lastChange {
+		if cmd := m.apply(c); cmd != nil {
+			last = cmd
+		}
+	}
+	return last
 }
 
 // deleteLines removes whole lines lo..hi including a bounding newline,
@@ -392,8 +511,15 @@ func (m *Model) quit(saveFirst bool) tea.Cmd {
 }
 
 // edited notes a buffer change and schedules the debounced autosave: the
-// tick only saves if no further edit superseded it.
+// tick only saves if no further edit superseded it. The very first edit of
+// a buffer that started empty saves immediately — until something is on
+// disk there is no base, and an agent write racing the debounce would
+// win the whole line (the cold-start race; see DESIGN.md).
 func (m *Model) edited() tea.Cmd {
+	if m.eagerSave {
+		m.eagerSave = false
+		m.save()
+	}
 	m.editGen++
 	gen := m.editGen
 	return tea.Tick(saveDelay, func(time.Time) tea.Msg { return saveTickMsg(gen) })
@@ -441,6 +567,9 @@ func (m *Model) mergeExternal(c filesync.Change) tea.Cmd {
 	m.cursor = m.buf.Clamp(buffer.Pos{Line: newLine, Col: m.cursor.Col})
 	if m.eng.Mode() != vim.ModeInsert {
 		m.cursor = m.clampNormal(m.cursor)
+	}
+	if m.visual.active {
+		m.visual.anchor = m.buf.Clamp(m.visual.anchor)
 	}
 
 	if slices.Equal(merged, c.Lines) {

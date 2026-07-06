@@ -58,12 +58,23 @@ func TestEngineSequences(t *testing.T) {
 		{"u", []Cmd{{Kind: CmdUndo}}},
 		{"p", []Cmd{{Kind: CmdPaste}}},
 		{"P", []Cmd{{Kind: CmdPaste, Before: true}}},
-		{"0", []Cmd{{Kind: CmdMove, Motion: Motion{Kind: MotionLineStart}}}},
+		{"0", []Cmd{{Kind: CmdMove, Motion: Motion{Kind: MotionLineStart, Count: 1}}}},
 		{"$", []Cmd{{Kind: CmdMove, Motion: Motion{Kind: MotionLineEnd, Count: 1}}}},
 		// count containing a 0 digit: 10x
 		{"10x", []Cmd{{Kind: CmdDelete, Motion: Motion{Kind: MotionRight, Count: 10}}}},
 		// escape cancels a pending operator
 		{"d\x1bw", []Cmd{{Kind: CmdMove, Motion: Motion{Kind: MotionWordForward, Count: 1}}}},
+		// M7: text objects, paragraph motions, join, repeat
+		{"diw", []Cmd{{Kind: CmdDelete, Motion: Motion{Kind: MotionObjWord, Inner: true}}}},
+		{"dap", []Cmd{{Kind: CmdDelete, Motion: Motion{Kind: MotionObjPara}}}},
+		{"cip", []Cmd{{Kind: CmdChange, Motion: Motion{Kind: MotionObjPara, Inner: true}}}},
+		{"}", []Cmd{{Kind: CmdMove, Motion: Motion{Kind: MotionParaForward, Count: 1}}}},
+		{"2{", []Cmd{{Kind: CmdMove, Motion: Motion{Kind: MotionParaBack, Count: 2}}}},
+		{"d}", []Cmd{{Kind: CmdDelete, Motion: Motion{Kind: MotionParaForward, Count: 1}}}},
+		{"J", []Cmd{{Kind: CmdJoin}}},
+		{".", []Cmd{{Kind: CmdRepeat}}},
+		// dta still works: 'a' is the till target, not a text object
+		{"dta", []Cmd{{Kind: CmdDelete, Motion: Motion{Kind: MotionTill, Count: 1, Char: 'a'}}}},
 	}
 	for _, c := range cases {
 		t.Run(c.in, func(t *testing.T) {
@@ -140,6 +151,54 @@ func TestEngineCommandLine(t *testing.T) {
 	feed(e, ":w\b\b")
 	if e.Mode() != ModeNormal {
 		t.Errorf("mode = %v, want normal after backspacing out", e.Mode())
+	}
+}
+
+func TestVisualMode(t *testing.T) {
+	e := New()
+	got := feed(e, "vwd")
+	want := []Cmd{
+		{Kind: CmdEnterVisual},
+		{Kind: CmdMove, Motion: Motion{Kind: MotionWordForward, Count: 1}},
+		{Kind: CmdDelete, Selection: true},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %+v", got)
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Errorf("cmd %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+	if e.Mode() != ModeNormal {
+		t.Errorf("mode after visual delete = %v", e.Mode())
+	}
+
+	e = New()
+	got = feed(e, "Vjy")
+	want = []Cmd{
+		{Kind: CmdEnterVisual, Linewise: true},
+		{Kind: CmdMove, Motion: Motion{Kind: MotionDown, Count: 1}},
+		{Kind: CmdYank, Selection: true},
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("V: cmd %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+
+	// esc cancels; c enters insert; ip reshapes the selection
+	e = New()
+	got = feed(e, "vip")
+	if got[len(got)-1] != (Cmd{Kind: CmdSelectObject, Motion: Motion{Kind: MotionObjPara, Inner: true}}) {
+		t.Errorf("vip: %+v", got)
+	}
+	if e.Mode() != ModeVisual {
+		t.Errorf("mode after vip = %v", e.Mode())
+	}
+	got = feed(e, "c")
+	if got[0] != (Cmd{Kind: CmdChange, Selection: true}) || e.Mode() != ModeInsert {
+		t.Errorf("c in visual: %+v mode %v", got, e.Mode())
 	}
 }
 

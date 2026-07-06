@@ -9,6 +9,8 @@ const (
 	ModeNormal Mode = iota
 	ModeInsert
 	ModeCommand
+	ModeVisual
+	ModeVisualLine
 )
 
 func (m Mode) String() string {
@@ -17,6 +19,10 @@ func (m Mode) String() string {
 		return "INSERT"
 	case ModeCommand:
 		return "COMMAND"
+	case ModeVisual:
+		return "VISUAL"
+	case ModeVisualLine:
+		return "V-LINE"
 	default:
 		return "NORMAL"
 	}
@@ -54,7 +60,12 @@ const (
 	CmdPaste
 	CmdUndo
 	CmdRedo
-	CmdEx // Text carries the command line, e.g. "wq"
+	CmdJoin
+	CmdRepeat // .
+	CmdEnterVisual
+	CmdExitVisual
+	CmdSelectObject // visual mode iw/ip: reshape the selection
+	CmdEx           // Text carries the command line, e.g. "wq"
 )
 
 // InsertAt says where CmdEnterInsert places the cursor.
@@ -70,11 +81,13 @@ const (
 )
 
 type Cmd struct {
-	Kind   CmdKind
-	Motion Motion
-	Text   string
-	At     InsertAt
-	Before bool // paste before cursor (P)
+	Kind      CmdKind
+	Motion    Motion
+	Text      string
+	At        InsertAt
+	Before    bool // paste before cursor (P)
+	Selection bool // operator applies to the visual selection
+	Linewise  bool // visual line mode (V)
 }
 
 // Engine holds pending modal state between keypresses.
@@ -83,6 +96,7 @@ type Engine struct {
 	count   int  // count typed since the operator (or since idle)
 	opCount int  // count typed before the operator
 	op      rune // pending operator: d, c, y, or 0
+	obj     rune // pending text-object qualifier: i or a
 	prefixG bool
 	find    rune // pending f or t awaiting its target character
 	cmdline []rune
@@ -100,9 +114,81 @@ func (e *Engine) Feed(k Key) []Cmd {
 		return e.insert(k)
 	case ModeCommand:
 		return e.command(k)
+	case ModeVisual, ModeVisualLine:
+		return e.visual(k)
 	default:
 		return e.normal(k)
 	}
+}
+
+// motionKind maps single-key motions shared by normal and visual mode.
+func motionKind(r rune) (MotionKind, bool) {
+	switch r {
+	case 'h':
+		return MotionLeft, true
+	case 'l', ' ':
+		return MotionRight, true
+	case 'j':
+		return MotionDown, true
+	case 'k':
+		return MotionUp, true
+	case '0':
+		return MotionLineStart, true
+	case '$':
+		return MotionLineEnd, true
+	case 'w':
+		return MotionWordForward, true
+	case 'b':
+		return MotionWordBack, true
+	case 'e':
+		return MotionWordEnd, true
+	case '{':
+		return MotionParaBack, true
+	case '}':
+		return MotionParaForward, true
+	}
+	return MotionNone, false
+}
+
+// pendingMotion handles the multi-key motion machinery shared by normal
+// and visual mode: counts, f/t targets, and the g prefix. It returns the
+// completed motion if this key finished one, and whether the key was
+// consumed either way.
+func (e *Engine) pendingMotion(r rune) (Motion, bool, bool) {
+	if e.find != 0 {
+		kind := MotionFind
+		if e.find == 't' {
+			kind = MotionTill
+		}
+		e.find = 0
+		return Motion{Kind: kind, Count: e.totalCount(), Char: r}, true, true
+	}
+	if e.prefixG {
+		e.prefixG = false
+		if r == 'g' {
+			return Motion{Kind: MotionFileStart, Count: e.rawCount()}, true, true
+		}
+		e.reset()
+		return Motion{}, false, true
+	}
+	if r >= '1' && r <= '9' || (r == '0' && e.count > 0) {
+		e.count = e.count*10 + int(r-'0')
+		return Motion{}, false, true
+	}
+	switch r {
+	case 'g':
+		e.prefixG = true
+		return Motion{}, false, true
+	case 'f', 't':
+		e.find = r
+		return Motion{}, false, true
+	case 'G':
+		return Motion{Kind: MotionFileEnd, Count: e.rawCount()}, true, true
+	}
+	if kind, ok := motionKind(r); ok {
+		return Motion{Kind: kind, Count: e.totalCount()}, true, true
+	}
+	return Motion{}, false, false
 }
 
 func (e *Engine) normal(k Key) []Cmd {
@@ -123,24 +209,30 @@ func (e *Engine) normal(k Key) []Cmd {
 		return nil
 	}
 
-	if e.find != 0 {
-		kind := MotionFind
-		if e.find == 't' {
-			kind = MotionTill
-		}
-		e.find = 0
-		return e.motion(Motion{Kind: kind, Count: e.totalCount(), Char: r})
-	}
-	if e.prefixG {
-		e.prefixG = false
-		if r == 'g' {
-			return e.motion(Motion{Kind: MotionFileStart, Count: e.rawCount()})
+	if e.obj != 0 {
+		inner := e.obj == 'i'
+		e.obj = 0
+		switch r {
+		case 'w':
+			return e.operate(Motion{Kind: MotionObjWord, Inner: inner})
+		case 'p':
+			return e.operate(Motion{Kind: MotionObjPara, Inner: inner})
 		}
 		e.reset()
 		return nil
 	}
-	if r >= '1' && r <= '9' || (r == '0' && e.count > 0) {
-		e.count = e.count*10 + int(r-'0')
+
+	// i/a after an operator introduce a text object, not insert mode —
+	// unless a pending f/t is waiting for its target character
+	if e.op != 0 && e.find == 0 && !e.prefixG && (r == 'i' || r == 'a') {
+		e.obj = r
+		return nil
+	}
+
+	if m, done, consumed := e.pendingMotion(r); consumed {
+		if done {
+			return e.motion(m)
+		}
 		return nil
 	}
 
@@ -157,32 +249,6 @@ func (e *Engine) normal(k Key) []Cmd {
 		e.opCount = e.count
 		e.count = 0
 		return nil
-	case 'g':
-		e.prefixG = true
-		return nil
-	case 'f', 't':
-		e.find = r
-		return nil
-	case 'h':
-		return e.motion(Motion{Kind: MotionLeft, Count: e.totalCount()})
-	case 'l', ' ':
-		return e.motion(Motion{Kind: MotionRight, Count: e.totalCount()})
-	case 'j':
-		return e.motion(Motion{Kind: MotionDown, Count: e.totalCount()})
-	case 'k':
-		return e.motion(Motion{Kind: MotionUp, Count: e.totalCount()})
-	case '0':
-		return e.motion(Motion{Kind: MotionLineStart})
-	case '$':
-		return e.motion(Motion{Kind: MotionLineEnd, Count: e.totalCount()})
-	case 'w':
-		return e.motion(Motion{Kind: MotionWordForward, Count: e.totalCount()})
-	case 'b':
-		return e.motion(Motion{Kind: MotionWordBack, Count: e.totalCount()})
-	case 'e':
-		return e.motion(Motion{Kind: MotionWordEnd, Count: e.totalCount()})
-	case 'G':
-		return e.motion(Motion{Kind: MotionFileEnd, Count: e.rawCount()})
 	case 'x':
 		n := e.totalCount()
 		e.reset()
@@ -206,6 +272,28 @@ func (e *Engine) normal(k Key) []Cmd {
 			'A': AtLineEnd, 'o': AtLineBelow, 'O': AtLineAbove,
 		}[r]
 		return one(Cmd{Kind: CmdEnterInsert, At: at})
+	case 'v':
+		if e.op != 0 {
+			e.reset()
+			return nil
+		}
+		e.reset()
+		e.mode = ModeVisual
+		return one(Cmd{Kind: CmdEnterVisual})
+	case 'V':
+		if e.op != 0 {
+			e.reset()
+			return nil
+		}
+		e.reset()
+		e.mode = ModeVisualLine
+		return one(Cmd{Kind: CmdEnterVisual, Linewise: true})
+	case 'J':
+		e.reset()
+		return one(Cmd{Kind: CmdJoin})
+	case '.':
+		e.reset()
+		return one(Cmd{Kind: CmdRepeat})
 	case 'p':
 		e.reset()
 		return one(Cmd{Kind: CmdPaste})
@@ -224,6 +312,68 @@ func (e *Engine) normal(k Key) []Cmd {
 		e.mode = ModeCommand
 		e.cmdline = nil
 		return nil
+	}
+	e.reset()
+	return nil
+}
+
+func (e *Engine) visual(k Key) []Cmd {
+	switch k.Special {
+	case KeyEsc:
+		e.reset()
+		e.mode = ModeNormal
+		return one(Cmd{Kind: CmdExitVisual})
+	case KeyEnter:
+		return one(Cmd{Kind: CmdMove, Motion: Motion{Kind: MotionDown, Count: e.takeCount()}})
+	case KeyBackspace:
+		return one(Cmd{Kind: CmdMove, Motion: Motion{Kind: MotionLeft, Count: e.takeCount()}})
+	}
+	r := k.Rune
+	if r == 0 {
+		return nil
+	}
+
+	if e.obj != 0 {
+		inner := e.obj == 'i'
+		e.obj = 0
+		switch r {
+		case 'w':
+			return one(Cmd{Kind: CmdSelectObject, Motion: Motion{Kind: MotionObjWord, Inner: inner}})
+		case 'p':
+			return one(Cmd{Kind: CmdSelectObject, Motion: Motion{Kind: MotionObjPara, Inner: inner}})
+		}
+		e.reset()
+		return nil
+	}
+
+	if m, done, consumed := e.pendingMotion(r); consumed {
+		if done {
+			e.resetCounts()
+			return one(Cmd{Kind: CmdMove, Motion: m})
+		}
+		return nil
+	}
+
+	switch r {
+	case 'i', 'a':
+		e.obj = r
+		return nil
+	case 'd', 'x':
+		e.reset()
+		e.mode = ModeNormal
+		return one(Cmd{Kind: CmdDelete, Selection: true})
+	case 'y':
+		e.reset()
+		e.mode = ModeNormal
+		return one(Cmd{Kind: CmdYank, Selection: true})
+	case 'c':
+		e.reset()
+		e.mode = ModeInsert
+		return one(Cmd{Kind: CmdChange, Selection: true})
+	case 'v', 'V':
+		e.reset()
+		e.mode = ModeNormal
+		return one(Cmd{Kind: CmdExitVisual})
 	}
 	e.reset()
 	return nil
@@ -276,7 +426,7 @@ func (e *Engine) motion(m Motion) []Cmd {
 	if e.op != 0 {
 		return e.operate(m)
 	}
-	e.reset()
+	e.resetCounts()
 	return one(Cmd{Kind: CmdMove, Motion: m})
 }
 
@@ -313,11 +463,23 @@ func (e *Engine) rawCount() int {
 	return e.totalCount()
 }
 
+// takeCount returns totalCount and clears it.
+func (e *Engine) takeCount() int {
+	n := e.totalCount()
+	e.resetCounts()
+	return n
+}
+
 func (e *Engine) reset() {
-	e.count, e.opCount = 0, 0
+	e.resetCounts()
 	e.op = 0
+	e.obj = 0
 	e.prefixG = false
 	e.find = 0
+}
+
+func (e *Engine) resetCounts() {
+	e.count, e.opCount = 0, 0
 }
 
 func one(c Cmd) []Cmd { return []Cmd{c} }
