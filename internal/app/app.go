@@ -58,6 +58,7 @@ type Model struct {
 	visual        visual
 	lastSearch    string
 	msg           string
+	msgCo         bool // style the message as a co-writer notice
 	editGen       int
 	eagerSave     bool // save on the very first edit: closes the new-file race
 	pad           int  // left padding centering the capped text column
@@ -121,6 +122,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.quit(true)
 		}
 		m.msg = ""
+		m.msgCo = false
 		if m.eng.Mode() == vim.ModeInsert && m.insertArrow(msg.Type) {
 			m.relayout()
 			m.scrollIntoView()
@@ -677,6 +679,7 @@ func (m *Model) noteMerge(hunks []filesync.Hunk) {
 		delta += len(h.Lines) - (h.End - h.Start)
 	}
 	m.msg = fmt.Sprintf("co-writer: +%d -%d lines (g; to jump)", added, removed)
+	m.msgCo = true
 }
 
 // hlFade schedules the merge highlight to clear.

@@ -13,7 +13,9 @@ import (
 )
 
 var (
-	statusStyle = lipgloss.NewStyle().Reverse(true)
+	// ANSI palette colors so the bar follows the user's terminal theme
+	statusStyle = lipgloss.NewStyle().Background(lipgloss.Color("4")).Foreground(lipgloss.Color("15"))
+	coMsgStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Bold(true)
 	tildeStyle  = lipgloss.NewStyle().Faint(true)
 	mergeBg     = lipgloss.AdaptiveColor{Light: "254", Dark: "236"}
 
@@ -204,6 +206,9 @@ func (m *Model) messageLine() string {
 		return ":" + m.eng.Cmdline()
 	case vim.ModeSearch:
 		return "/" + m.eng.Cmdline()
+	}
+	if m.msgCo {
+		return coMsgStyle.Render(m.msg)
 	}
 	return m.msg
 }
