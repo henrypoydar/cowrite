@@ -43,6 +43,15 @@ Split panes in your terminal (Ghostty, tmux, iTerm2 — whatever you use):
 
 Write your opening in the left pane. Ask your agent for the next passage in the right pane. Watch it land in your buffer. Repeat.
 
+Inside tmux, cowrite can open the split for you:
+
+```sh
+cowrite draft.md --with claude
+cowrite draft.md --with 'claude "read {file} and wait for my cue"'
+```
+
+`--with` takes any command — cowrite still never talks to the agent; it just saves you the setup dance. `{file}` expands to the file path.
+
 ## Installing
 
 ```sh

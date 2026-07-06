@@ -90,6 +90,16 @@ model state, so there's no locking.
   should re-read the file (or use targeted edits, like Claude Code's Edit
   tool) rather than whole-file writes from memory, and `u` undoes the
   agent's merge in one step when it happens.
+- **No embedded agent pane.** Running the agent *inside* cowrite would
+  mean building a terminal multiplexer (pty + VT100 emulation + key
+  routing) and choosing an agent to integrate — surrendering both the
+  small scope and the filesystem-is-the-protocol agnosticism. The terminal
+  already does splits better. The friction that idea points at is real,
+  though, and gets cheaper answers: `--with <command>` opens the agent in
+  a tmux split (shipped, 0.2.0); a `:co <prompt>` one-shot ex command
+  routed through the existing watcher/merge is a possible later
+  experiment, with the caveat that one-shot prompts lose the
+  conversational session that makes a live agent pane valuable.
 - **Cursor width is rune-based** for now; grapheme clusters and east-asian
   widths via `rivo/uniseg` are a known future fix, not a v1 blocker.
 - **Trailing newline**: files are stored with one; the buffer strips it on
@@ -116,8 +126,11 @@ model state, so there's no locking.
    `g;` jumps to the merge site; the text column caps at 80ch and centers
    in wider terminals; insert-mode cursor renders as an underline; a
    panic flushes the buffer to `<file>.crash` before dying.~~
-10. **Ship** — goreleaser, Homebrew tap. Config staged in
-    `.goreleaser.yaml`; needs the GitHub repos (see comments there).
+10. ~~**Ship** — goreleaser, Homebrew tap.~~ v0.1.0 released;
+    `brew install henrypoydar/tap/cowrite`.
+11. ~~**Launcher** — `cowrite <file> --with <command>` opens the agent in
+    a tmux split (`{file}` placeholder, focus stays on the editor);
+    `--version`.~~ v0.2.0.
 
 ## Testing
 
