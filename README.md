@@ -6,7 +6,7 @@ Run cowrite in one split pane and Claude Code (or Codex, or any terminal agent) 
 
 There's no integration to configure and no API to wire up. cowrite never talks to an agent directly — the file on disk is the shared workspace, which means it works with any agent that can edit files, today and whatever ships next year.
 
-<img width="2081" height="1161" alt="Screenshot 2026-07-06 at 18 54 44" src="https://github.com/user-attachments/assets/f42c4213-59f1-4d2b-abd4-775c2ba8b27c" />
+https://github.com/user-attachments/assets/6aff7867-123e-4beb-b36f-21943ce25c6e
 
 ## Why
 
