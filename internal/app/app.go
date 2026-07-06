@@ -419,7 +419,9 @@ func (m *Model) operandRange(c vim.Cmd) (buffer.Pos, buffer.Pos, bool) {
 // operate applies d, c, or y over a selection, text object, or motion.
 func (m *Model) operate(c vim.Cmd) tea.Cmd {
 	start, end, linewise := m.operandRange(c)
-	if start == end {
+	// a blank line yields a zero-width linewise range that still means
+	// "this whole line" — only charwise ops bail on an empty span
+	if start == end && !linewise {
 		if c.Kind == vim.CmdChange {
 			m.buf.BeginGroup(m.cursor)
 		}
@@ -535,7 +537,7 @@ func (m *Model) deleteLines(lo, hi int) {
 }
 
 func (m *Model) paste(before bool) tea.Cmd {
-	if m.reg.text == "" {
+	if m.reg.text == "" && !m.reg.linewise { // a yanked blank line is "" + linewise
 		return nil
 	}
 	if m.reg.linewise {

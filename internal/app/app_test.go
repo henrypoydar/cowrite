@@ -267,6 +267,35 @@ func TestTextObjects(t *testing.T) {
 	}
 }
 
+func TestDeleteBlankLine(t *testing.T) {
+	m, _ := newModel(t, "alpha\n\nomega\n")
+	press(m, "jdd")
+	if got := m.buf.Contents(); got != "alpha\nomega" {
+		t.Errorf("dd on blank line: %q", got)
+	}
+	press(m, "u")
+
+	// yy + p round-trips a blank line
+	press(m, "ggjyyp")
+	if got := m.buf.Contents(); got != "alpha\n\n\nomega" {
+		t.Errorf("yy/p on blank line: %q", got)
+	}
+
+	// V d on a blank line
+	m, _ = newModel(t, "alpha\n\nomega\n")
+	press(m, "jVd")
+	if got := m.buf.Contents(); got != "alpha\nomega" {
+		t.Errorf("Vd on blank line: %q", got)
+	}
+
+	// dip on a blank run
+	m, _ = newModel(t, "alpha\n\n\nomega\n")
+	press(m, "jdip")
+	if got := m.buf.Contents(); got != "alpha\nomega" {
+		t.Errorf("dip on blank run: %q", got)
+	}
+}
+
 func TestParagraphMotionAndJoin(t *testing.T) {
 	m, _ := newModel(t, "para one\nstill one\n\npara two\n")
 	press(m, "}")
