@@ -13,11 +13,16 @@ import (
 )
 
 var (
-	// ANSI palette colors so the bar follows the user's terminal theme
-	statusStyle = lipgloss.NewStyle().Background(lipgloss.Color("4")).Foreground(lipgloss.Color("15"))
-	coMsgStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Bold(true)
-	tildeStyle  = lipgloss.NewStyle().Faint(true)
-	mergeBg     = lipgloss.AdaptiveColor{Light: "254", Dark: "236"}
+	// No background fills: accent colors on the terminal's own background,
+	// so the bar reads like chrome, not a stripe. ANSI palette throughout.
+	faintStyle = lipgloss.NewStyle().Faint(true)
+	fileStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
+	insertMode = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
+	visualMode = lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Bold(true)
+	promptMode = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+	coMsgStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Bold(true)
+	tildeStyle = lipgloss.NewStyle().Faint(true)
+	mergeBg    = lipgloss.AdaptiveColor{Light: "254", Dark: "236"}
 
 	mdStyles = map[render.Style]lipgloss.Style{
 		render.SText:    lipgloss.NewStyle(),
@@ -60,6 +65,8 @@ func (m *Model) View() string {
 			m.eng.Mode() == vim.ModeInsert, m.hlLines[row.Line]))
 		b.WriteByte('\n')
 	}
+	b.WriteString(faintStyle.Render(strings.Repeat("─", m.width)))
+	b.WriteByte('\n')
 	b.WriteString(m.statusLine())
 	b.WriteByte('\n')
 	b.WriteString(m.messageLine())
@@ -167,21 +174,33 @@ func (m *Model) selectionSpan() (buffer.Pos, buffer.Pos, bool) {
 }
 
 func (m *Model) statusLine() string {
-	name := filepath.Base(m.path)
-	if m.buf.Dirty() {
-		name += " [+]"
-	}
 	mode := m.eng.Mode().String()
 	if m.visual.active && m.visual.linewise {
 		mode = "V-LINE"
 	}
-	left := fmt.Sprintf(" %s  %s", mode, name)
-	right := fmt.Sprintf("%dw  %d:%d ", m.wordCount(), m.cursor.Line+1, m.cursor.Col+1)
+	var modeStyle lipgloss.Style
+	switch m.eng.Mode() {
+	case vim.ModeInsert:
+		modeStyle = insertMode
+	case vim.ModeVisual, vim.ModeVisualLine:
+		modeStyle = visualMode
+	case vim.ModeCommand, vim.ModeSearch:
+		modeStyle = promptMode
+	default:
+		modeStyle = faintStyle
+	}
+
+	dirty := ""
+	if m.buf.Dirty() {
+		dirty = faintStyle.Render(" [+]")
+	}
+	left := " " + modeStyle.Render(mode) + "  " + fileStyle.Render(filepath.Base(m.path)) + dirty
+	right := faintStyle.Render(fmt.Sprintf("%dw  %d:%d ", m.wordCount(), m.cursor.Line+1, m.cursor.Col+1))
 	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {
 		gap = 1
 	}
-	return statusStyle.Render(left + strings.Repeat(" ", gap) + right)
+	return left + strings.Repeat(" ", gap) + right
 }
 
 func (m *Model) wordCount() int {

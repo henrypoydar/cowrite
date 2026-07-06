@@ -712,7 +712,7 @@ func (m *Model) setGoal() {
 	_, m.goal = m.layout.PosToRow(m.cursor)
 }
 
-func (m *Model) viewRows() int { return max(1, m.height-2) }
+func (m *Model) viewRows() int { return max(1, m.height-3) } // rule + status + message
 
 func (m *Model) scrollIntoView() {
 	if m.width == 0 {
