@@ -74,6 +74,11 @@ model state, so there's no locking.
 - **`:q` saves and quits.** In a continuous-save editor, refusing to quit
   because of unsaved changes is noise; the file is already current or about
   to be. `:q!` quits without the final save.
+- **Known edge — the cold-start race.** On a brand-new (or just-opened
+  empty) file, the user's first words and an agent write can both change
+  line 0 relative to an empty base within the 400ms debounce; disk-wins
+  then drops the user's in-flight text. Verified live. Mitigation candidate
+  for later: save immediately on the first edit of an empty buffer.
 - **Cursor width is rune-based** for now; grapheme clusters and east-asian
   widths via `rivo/uniseg` are a known future fix, not a v1 blocker.
 - **Trailing newline**: files are stored with one; the buffer strips it on
