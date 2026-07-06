@@ -1,9 +1,12 @@
 package render
 
+import "strings"
+
 // Markdown decoration: a Style per rune, computed line by line. This is
 // decoration, not preview — the source stays visible; structure is styled
 // in place. The lexer is deliberately lightweight: headings, blockquotes,
-// list markers, fenced and inline code, strong and emphasis. No nesting.
+// list markers, fenced and inline code, strong and emphasis, plus muted
+// frontmatter and %% comments %%. No nesting.
 
 type Style uint8
 
@@ -15,18 +18,25 @@ const (
 	SEmph          // *italic* or _italic_
 	SCode          // `inline` and fenced block contents
 	SQuote         // blockquote text
+	SComment       // frontmatter and %% comments %% — metadata, not prose
 )
 
 // Decorate computes a style for every rune of every line.
 func Decorate(l Lines) [][]Style {
 	out := make([][]Style, l.LineCount())
+	fmEnd := frontmatterEnd(l)
 	inFence := false
+	inComment := false
 	for i := range l.LineCount() {
 		line := l.Line(i)
 		st := make([]Style, len(line))
 		out[i] = st
 
-		if isFence(line) {
+		if i <= fmEnd {
+			fill(st, SComment)
+			continue
+		}
+		if !inComment && isFence(line) {
 			fill(st, SMarker)
 			inFence = !inFence
 			continue
@@ -35,30 +45,82 @@ func Decorate(l Lines) [][]Style {
 			fill(st, SCode)
 			continue
 		}
-		if n := headingLevel(line); n > 0 {
-			for j := range n {
-				st[j] = SMarker
-			}
-			for j := n; j < len(line); j++ {
-				st[j] = SHeading
-			}
-			continue
-		}
-		if len(line) > 0 && line[0] == '>' {
-			st[0] = SMarker
-			for j := 1; j < len(line); j++ {
-				st[j] = SQuote
-			}
-			continue
-		}
-		if n := listMarker(line); n > 0 {
-			for j := range n {
-				st[j] = SMarker
+		mask := commentMask(line, &inComment)
+		decorateLine(line, st)
+		for j, commented := range mask {
+			if commented {
+				st[j] = SComment
 			}
 		}
-		inline(line, st)
 	}
 	return out
+}
+
+// decorateLine styles one ordinary content line: heading, blockquote, or
+// list marker + inline spans.
+func decorateLine(line []rune, st []Style) {
+	if n := headingLevel(line); n > 0 {
+		for j := range n {
+			st[j] = SMarker
+		}
+		for j := n; j < len(line); j++ {
+			st[j] = SHeading
+		}
+		return
+	}
+	if len(line) > 0 && line[0] == '>' {
+		st[0] = SMarker
+		for j := 1; j < len(line); j++ {
+			st[j] = SQuote
+		}
+		return
+	}
+	if n := listMarker(line); n > 0 {
+		for j := range n {
+			st[j] = SMarker
+		}
+	}
+	inline(line, st)
+}
+
+// frontmatterEnd returns the last line of a YAML frontmatter block —
+// opened by "---" as the document's first line and closed by another —
+// or -1. An unclosed opener is not frontmatter (else the whole document
+// would mute while the block is being typed).
+func frontmatterEnd(l Lines) int {
+	if l.LineCount() == 0 || !isFmDelim(l.Line(0)) {
+		return -1
+	}
+	for i := 1; i < l.LineCount(); i++ {
+		if isFmDelim(l.Line(i)) {
+			return i
+		}
+	}
+	return -1
+}
+
+func isFmDelim(line []rune) bool {
+	s := string(line)
+	return s == "---" || strings.TrimRight(s, " ") == "---"
+}
+
+// commentMask marks the runes of line inside %% comments %%, Obsidian
+// style, carrying open comments across lines.
+func commentMask(line []rune, open *bool) []bool {
+	mask := make([]bool, len(line))
+	i := 0
+	for i < len(line) {
+		delim := i+1 < len(line) && line[i] == '%' && line[i+1] == '%'
+		if delim {
+			mask[i], mask[i+1] = true, true
+			*open = !*open
+			i += 2
+			continue
+		}
+		mask[i] = *open
+		i++
+	}
+	return mask
 }
 
 func fill(st []Style, s Style) {

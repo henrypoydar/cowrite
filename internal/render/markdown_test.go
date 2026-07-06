@@ -14,7 +14,7 @@ func deco(t *testing.T, doc string, line int) string {
 	styles := Decorate(buffer.New(doc))
 	letters := map[Style]byte{
 		SText: 't', SHeading: 'H', SMarker: 'm', SStrong: 'S',
-		SEmph: 'E', SCode: 'C', SQuote: 'Q',
+		SEmph: 'E', SCode: 'C', SQuote: 'Q', SComment: 'x',
 	}
 	var b strings.Builder
 	for _, s := range styles[line] {
@@ -44,6 +44,19 @@ func TestDecorate(t *testing.T) {
 		{"fence line", "```go\ncode here\n```\n", 0, "mmmmm"},
 		{"fenced content", "```go\ncode here\n```\n", 1, "CCCCCCCCC"},
 		{"after fence closes", "```\nx\n```\nplain\n", 3, "ttttt"},
+		// frontmatter
+		{"frontmatter delimiter", "---\ntitle: Post\n---\nbody\n", 0, "xxx"},
+		{"frontmatter content", "---\ntitle: Post\n---\nbody\n", 1, "xxxxxxxxxxx"},
+		{"after frontmatter", "---\ntitle: Post\n---\nbody\n", 3, "tttt"},
+		{"unclosed frontmatter is not frontmatter", "---\ntitle: Post\n", 1, "ttttttttttt"},
+		{"--- mid-document is not frontmatter", "body\n---\nmore\n", 1, "ttt"},
+		// %% comments %%
+		{"inline comment", "a %%hidden%% b\n", 0, "ttxxxxxxxxxxtt"},
+		{"comment spans lines, opener", "pre %% note\nstill note\n%% post\n", 0, "ttttxxxxxxx"},
+		{"comment spans lines, middle", "pre %% note\nstill note\n%% post\n", 1, "xxxxxxxxxx"},
+		{"comment spans lines, closer", "pre %% note\nstill note\n%% post\n", 2, "xxttttt"},
+		{"comment overrides heading", "%%\n# hidden\n%%\n", 1, "xxxxxxxx"},
+		{"percent inside fence is code", "```\n%% x\n```\nafter\n", 3, "ttttt"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
