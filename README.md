@@ -49,6 +49,12 @@ Write your opening in the left pane. Ask your agent for the next passage in the 
 brew install henrypoydar/tap/cowrite
 ```
 
+Or with Go:
+
+```sh
+go install github.com/henrypoydar/cowrite@latest
+```
+
 Or build from source — see [Contributing](#contributing).
 
 Then open any markdown file:
