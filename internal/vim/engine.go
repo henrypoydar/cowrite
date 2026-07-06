@@ -71,6 +71,7 @@ const (
 	CmdEx           // Text carries the command line, e.g. "wq"
 	CmdSearch       // Text carries the pattern; empty repeats the last one
 	CmdSearchNext   // n, or N when Before is set
+	CmdJumpChange   // g; — jump to the co-writer's last merged change
 )
 
 // InsertAt says where CmdEnterInsert places the cursor.
@@ -229,6 +230,13 @@ func (e *Engine) normal(k Key) []Cmd {
 		}
 		e.reset()
 		return nil
+	}
+
+	// g-prefixed commands beyond the gg motion live here; pendingMotion
+	// only knows motions
+	if e.prefixG && r == ';' {
+		e.reset()
+		return one(Cmd{Kind: CmdJumpChange})
 	}
 
 	// i/a after an operator introduce a text object, not insert mode —

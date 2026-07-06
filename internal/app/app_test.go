@@ -357,6 +357,79 @@ func TestWordCount(t *testing.T) {
 	}
 }
 
+func TestMergeVisibility(t *testing.T) {
+	m, _ := newModel(t, "alpha\nbeta\ngamma\n")
+	press(m, ":w\rG") // cursor on gamma
+
+	m.Update(extChangeMsg(filesync.Change{
+		Lines: []string{"alpha", "inserted one", "inserted two", "beta", "gamma"},
+	}))
+	if m.msg != "co-writer: +2 -0 lines (g; to jump)" {
+		t.Errorf("msg = %q", m.msg)
+	}
+	if !m.hlLines[1] || !m.hlLines[2] || m.hlLines[0] || m.hlLines[3] {
+		t.Errorf("hlLines = %v, want lines 1,2", m.hlLines)
+	}
+	press(m, "g;")
+	if m.cursor != (buffer.Pos{Line: 1, Col: 0}) {
+		t.Errorf("g; landed at %v", m.cursor)
+	}
+	// the fade clears only when the generation matches
+	m.Update(hlClearMsg(m.hlGen - 1))
+	if len(m.hlLines) == 0 {
+		t.Error("stale fade cleared the highlight")
+	}
+	m.Update(hlClearMsg(m.hlGen))
+	if len(m.hlLines) != 0 {
+		t.Error("fade did not clear the highlight")
+	}
+}
+
+func TestJumpChangeWithoutMerge(t *testing.T) {
+	m, _ := newModel(t, "text\n")
+	press(m, "g;")
+	if m.msg != "no co-writer changes yet" {
+		t.Errorf("msg = %q", m.msg)
+	}
+}
+
+func TestTextColumnCapAndCenter(t *testing.T) {
+	m, _ := newModel(t, "words\n")
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 10})
+	if m.layout.Width != 80 {
+		t.Errorf("layout width = %d, want 80", m.layout.Width)
+	}
+	if m.pad != 20 {
+		t.Errorf("pad = %d, want 20", m.pad)
+	}
+	v := ansiRE.ReplaceAllString(m.View(), "")
+	if !strings.HasPrefix(v, strings.Repeat(" ", 20)+"words") {
+		t.Errorf("view not centered:\n%q", strings.SplitN(v, "\n", 2)[0])
+	}
+	// narrow terminals get the full width
+	m.Update(tea.WindowSizeMsg{Width: 40, Height: 10})
+	if m.layout.Width != 40 || m.pad != 0 {
+		t.Errorf("narrow: width %d pad %d", m.layout.Width, m.pad)
+	}
+}
+
+func TestCrashSaveFlushesBuffer(t *testing.T) {
+	m, path := newModel(t, "precious words\n")
+	press(m, "A more\x1b")
+	func() {
+		defer func() { _ = recover() }() // crashSave re-panics by design
+		defer m.crashSave()
+		panic("boom")
+	}()
+	data, err := os.ReadFile(path + ".crash")
+	if err != nil {
+		t.Fatal("no crash file written")
+	}
+	if string(data) != "precious words more\n" {
+		t.Errorf("crash file = %q", data)
+	}
+}
+
 func TestCursorShapePerMode(t *testing.T) {
 	// tests run without a TTY, so lipgloss strips styling unless forced
 	lipgloss.SetColorProfile(termenv.ANSI)

@@ -102,8 +102,13 @@ model state, so there's no locking.
 8. ~~**Writing-session polish** — `/` search with `n`/`N` wrap-around
    (plain substring, case-sensitive, per-line), insert-mode arrow keys,
    `^`, live word count in the status bar.~~
-9. **Ship** — goreleaser, Homebrew tap. Config staged in
-   `.goreleaser.yaml`; needs the GitHub repos (see comments there).
+9. ~~**Merge visibility & comfort** — merged lines get a background tint
+   fading after 3s, the message line reports "co-writer: +N -M lines",
+   `g;` jumps to the merge site; the text column caps at 80ch and centers
+   in wider terminals; insert-mode cursor renders as an underline; a
+   panic flushes the buffer to `<file>.crash` before dying.~~
+10. **Ship** — goreleaser, Homebrew tap. Config staged in
+    `.goreleaser.yaml`; needs the GitHub repos (see comments there).
 
 ## Testing
 

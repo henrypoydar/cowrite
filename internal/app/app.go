@@ -5,6 +5,7 @@ package app
 
 import (
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -33,7 +34,12 @@ type visual struct {
 type (
 	extChangeMsg filesync.Change
 	saveTickMsg  int
+	hlClearMsg   int
 )
+
+// maxTextWidth caps the wrap column: full-terminal prose lines are hard
+// to read, so the text block is capped and centered.
+const maxTextWidth = 80
 
 type Model struct {
 	path    string
@@ -54,6 +60,12 @@ type Model struct {
 	msg           string
 	editGen       int
 	eagerSave     bool // save on the very first edit: closes the new-file race
+	pad           int  // left padding centering the capped text column
+
+	// merge visibility: which lines the co-writer's last merge touched
+	hlLines       map[int]bool
+	hlGen         int
+	lastMergeLine int
 
 	// dot-repeat: the last completed change as replayable commands
 	lastChange []vim.Cmd
@@ -67,12 +79,13 @@ func New(path string) (*Model, error) {
 		return nil, err
 	}
 	m := &Model{
-		path:      path,
-		buf:       buffer.New(content),
-		eng:       vim.New(),
-		fs:        filesync.NewEngine(path),
-		done:      make(chan struct{}),
-		eagerSave: content == "",
+		path:          path,
+		buf:           buffer.New(content),
+		eng:           vim.New(),
+		fs:            filesync.NewEngine(path),
+		done:          make(chan struct{}),
+		eagerSave:     content == "",
+		lastMergeLine: -1,
 	}
 	m.fs.SetBase(m.buf.Lines())
 	m.changes, err = m.fs.Watch(m.done)
@@ -95,6 +108,7 @@ func (m *Model) waitChange() tea.Cmd {
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	defer m.crashSave()
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -136,8 +150,24 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.save()
 		}
 		return m, nil
+
+	case hlClearMsg:
+		if int(msg) == m.hlGen {
+			m.hlLines = nil
+		}
+		return m, nil
 	}
 	return m, nil
+}
+
+// crashSave is the last line of defense: if editing code panics, flush the
+// buffer to <file>.crash before letting Bubble Tea restore the terminal.
+func (m *Model) crashSave() {
+	if r := recover(); r != nil {
+		content := strings.Join(m.buf.Lines(), "\n") + "\n"
+		_ = os.WriteFile(m.path+".crash", []byte(content), 0o644)
+		panic(r)
+	}
 }
 
 // insertArrow moves the cursor in insert mode without leaving it; the
@@ -320,6 +350,14 @@ func (m *Model) apply(c vim.Cmd) tea.Cmd {
 
 	case vim.CmdSearchNext:
 		m.searchMove(c.Before)
+
+	case vim.CmdJumpChange:
+		if m.lastMergeLine >= 0 {
+			m.cursor = m.clampNormal(buffer.Pos{Line: m.lastMergeLine, Col: 0})
+			m.setGoal()
+		} else {
+			m.msg = "no co-writer changes yet"
+		}
 	}
 	return nil
 }
@@ -603,6 +641,7 @@ func (m *Model) mergeExternal(c filesync.Change) tea.Cmd {
 	if wasGrouping {
 		m.buf.BeginGroup(m.cursor)
 	}
+	m.noteMerge(filesync.Diff(ours, merged))
 
 	m.cursor = m.buf.Clamp(buffer.Pos{Line: newLine, Col: m.cursor.Col})
 	if m.eng.Mode() != vim.ModeInsert {
@@ -614,9 +653,37 @@ func (m *Model) mergeExternal(c filesync.Change) tea.Cmd {
 
 	if slices.Equal(merged, c.Lines) {
 		m.buf.MarkClean()
-		return nil
+		return m.hlFade()
 	}
-	return m.edited()
+	return tea.Batch(m.edited(), m.hlFade())
+}
+
+// noteMerge records what the co-writer's merge touched: a message with
+// line counts, a highlight on the merged lines, and the g; jump target.
+func (m *Model) noteMerge(hunks []filesync.Hunk) {
+	m.hlLines = map[int]bool{}
+	m.lastMergeLine = -1
+	added, removed, delta := 0, 0, 0
+	for _, h := range hunks {
+		start := h.Start + delta
+		for i := range h.Lines {
+			m.hlLines[start+i] = true
+		}
+		if m.lastMergeLine == -1 {
+			m.lastMergeLine = start
+		}
+		added += len(h.Lines)
+		removed += h.End - h.Start
+		delta += len(h.Lines) - (h.End - h.Start)
+	}
+	m.msg = fmt.Sprintf("co-writer: +%d -%d lines (g; to jump)", added, removed)
+}
+
+// hlFade schedules the merge highlight to clear.
+func (m *Model) hlFade() tea.Cmd {
+	m.hlGen++
+	gen := m.hlGen
+	return tea.Tick(3*time.Second, func(time.Time) tea.Msg { return hlClearMsg(gen) })
 }
 
 // clampNormal keeps a normal-mode cursor on a rune (col < len), or col 0 on
@@ -630,7 +697,9 @@ func (m *Model) clampNormal(p buffer.Pos) buffer.Pos {
 }
 
 func (m *Model) relayout() {
-	m.layout = render.Wrap(m.buf, max(1, m.width))
+	textW := min(m.width, maxTextWidth)
+	m.layout = render.Wrap(m.buf, max(1, textW))
+	m.pad = max(0, (m.width-textW)/2)
 }
 
 func (m *Model) setGoal() {

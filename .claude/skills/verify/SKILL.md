@@ -30,6 +30,8 @@ tmux -L cwv kill-server                           # cleanup
 ```
 
 Gotchas:
+- A `;` ending a send-keys argument is tmux's command separator — the key
+  is silently dropped. Escape it: `send-keys -l 'g\;'`.
 - Autosave debounce is 400ms — `sleep 0.8` after edits before checking disk.
 - The watcher coalesces events for 30ms; `sleep 0.4` after an external
   write before capturing the merged screen.
@@ -59,3 +61,9 @@ Gotchas:
 7. **Visual mode**: `vip` then capture with `-e` — the paragraph renders
    reverse-video except the cursor cell, which inverts back to stay
    visible; status bar reads V-LINE for linewise selections.
+8. **Merge visibility**: after an external write, the message line shows
+   "co-writer: +N -M lines (g; to jump)", merged lines carry a background
+   tint (`48;5;236` dark / `48;5;254` light) fading after ~3s, and
+   `g\;` jumps the cursor to the merge site.
+9. **Centering**: at 110 cols the text column caps at 80 and pads left by
+   15; narrow panes use full width.

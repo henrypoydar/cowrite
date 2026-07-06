@@ -15,6 +15,7 @@ import (
 var (
 	statusStyle = lipgloss.NewStyle().Reverse(true)
 	tildeStyle  = lipgloss.NewStyle().Faint(true)
+	mergeBg     = lipgloss.AdaptiveColor{Light: "254", Dark: "236"}
 
 	mdStyles = map[render.Style]lipgloss.Style{
 		render.SText:    lipgloss.NewStyle(),
@@ -34,10 +35,12 @@ func (m *Model) View() string {
 	deco := render.Decorate(m.buf)
 	cursorRow, cursorCol := m.layout.PosToRow(m.cursor)
 
+	pad := strings.Repeat(" ", m.pad)
 	var b strings.Builder
 	for i := range m.viewRows() {
 		r := m.top + i
 		if r >= len(m.layout.Rows) {
+			b.WriteString(pad)
 			b.WriteString(tildeStyle.Render("~"))
 			b.WriteByte('\n')
 			continue
@@ -50,7 +53,9 @@ func (m *Model) View() string {
 		if r == cursorRow {
 			cc = cursorCol
 		}
-		b.WriteString(renderRow(text, styles, selFrom, selTo, cc, m.eng.Mode() == vim.ModeInsert))
+		b.WriteString(pad)
+		b.WriteString(renderRow(text, styles, selFrom, selTo, cc,
+			m.eng.Mode() == vim.ModeInsert, m.hlLines[row.Line]))
 		b.WriteByte('\n')
 	}
 	b.WriteString(m.statusLine())
@@ -64,7 +69,14 @@ func (m *Model) View() string {
 // in normal mode — inverting whatever it lands on so it stays visible
 // inside a selection — and an underline in insert mode, the terminal
 // convention for "text goes here".
-func renderRow(text []rune, styles []render.Style, selFrom, selTo, cursorCol int, insertCursor bool) string {
+func renderRow(text []rune, styles []render.Style, selFrom, selTo, cursorCol int, insertCursor, merged bool) string {
+	base := func(i int) lipgloss.Style {
+		s := mdStyles[styles[i]]
+		if merged {
+			s = s.Background(mergeBg)
+		}
+		return s
+	}
 	var b strings.Builder
 	flush := func(from, to int) {
 		for from < to {
@@ -72,12 +84,12 @@ func renderRow(text []rune, styles []render.Style, selFrom, selTo, cursorCol int
 			for run < to && styles[run] == styles[from] {
 				run++
 			}
-			b.WriteString(mdStyles[styles[from]].Render(string(text[from:run])))
+			b.WriteString(base(from).Render(string(text[from:run])))
 			from = run
 		}
 	}
 	styled := func(i int) lipgloss.Style {
-		s := mdStyles[styles[i]]
+		s := base(i)
 		if i == cursorCol && insertCursor {
 			return s.Underline(true)
 		}
