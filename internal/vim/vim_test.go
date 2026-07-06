@@ -75,6 +75,13 @@ func TestEngineSequences(t *testing.T) {
 		{".", []Cmd{{Kind: CmdRepeat}}},
 		// dta still works: 'a' is the till target, not a text object
 		{"dta", []Cmd{{Kind: CmdDelete, Motion: Motion{Kind: MotionTill, Count: 1, Char: 'a'}}}},
+		// search
+		{"/find me\r", []Cmd{{Kind: CmdSearch, Text: "find me"}}},
+		{"/x\x1bn", []Cmd{{Kind: CmdSearchNext}}}, // esc cancels the prompt
+		{"n", []Cmd{{Kind: CmdSearchNext}}},
+		{"N", []Cmd{{Kind: CmdSearchNext, Before: true}}},
+		{"^", []Cmd{{Kind: CmdMove, Motion: Motion{Kind: MotionFirstNonBlank, Count: 1}}}},
+		{"d^", []Cmd{{Kind: CmdDelete, Motion: Motion{Kind: MotionFirstNonBlank, Count: 1}}}},
 	}
 	for _, c := range cases {
 		t.Run(c.in, func(t *testing.T) {

@@ -99,7 +99,11 @@ model state, so there's no locking.
    `ip`/`ap`), paragraph motions (`{`/`}`), `J`, `.` repeat.~~ Named
    registers deliberately deferred; the unnamed register covers prose
    workflows.
-8. **Ship** — goreleaser, Homebrew tap.
+8. ~~**Writing-session polish** — `/` search with `n`/`N` wrap-around
+   (plain substring, case-sensitive, per-line), insert-mode arrow keys,
+   `^`, live word count in the status bar.~~
+9. **Ship** — goreleaser, Homebrew tap. Config staged in
+   `.goreleaser.yaml`; needs the GitHub repos (see comments there).
 
 ## Testing
 

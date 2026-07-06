@@ -50,6 +50,7 @@ type Model struct {
 	goal          int // visual column j/k aims for
 	reg           register
 	visual        visual
+	lastSearch    string
 	msg           string
 	editGen       int
 	eagerSave     bool // save on the very first edit: closes the new-file race
@@ -106,6 +107,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.quit(true)
 		}
 		m.msg = ""
+		if m.eng.Mode() == vim.ModeInsert && m.insertArrow(msg.Type) {
+			m.relayout()
+			m.scrollIntoView()
+			return m, nil
+		}
 		var cmds []tea.Cmd
 		for _, k := range translate(msg, m.eng.Mode()) {
 			for _, c := range m.eng.Feed(k) {
@@ -132,6 +138,34 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
+}
+
+// insertArrow moves the cursor in insert mode without leaving it; the
+// open undo group simply keeps accumulating, which is simpler than vim's
+// break-undo-at-arrow rule and rarely noticed.
+func (m *Model) insertArrow(t tea.KeyType) bool {
+	switch t {
+	case tea.KeyLeft:
+		if m.cursor.Col > 0 {
+			m.cursor.Col--
+		}
+	case tea.KeyRight:
+		m.cursor.Col = min(m.cursor.Col+1, m.buf.LineLen(m.cursor.Line))
+	case tea.KeyUp, tea.KeyDown:
+		m.relayout()
+		row, _ := m.layout.PosToRow(m.cursor)
+		if t == tea.KeyUp {
+			row--
+		} else {
+			row++
+		}
+		m.cursor = m.buf.Clamp(m.layout.RowToPos(row, m.goal))
+		return true
+	default:
+		return false
+	}
+	m.setGoal()
+	return true
 }
 
 // translate decodes a terminal key event into engine keys. Arrow keys act
@@ -280,6 +314,12 @@ func (m *Model) apply(c vim.Cmd) tea.Cmd {
 
 	case vim.CmdEx:
 		return m.ex(c.Text)
+
+	case vim.CmdSearch:
+		m.doSearch(c.Text)
+
+	case vim.CmdSearchNext:
+		m.searchMove(c.Before)
 	}
 	return nil
 }

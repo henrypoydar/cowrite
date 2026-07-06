@@ -1,0 +1,33 @@
+# Release config for milestone 8. Prereqs, once the project goes public:
+#   gh repo create henrypoydar/cowrite --public --source . --push
+#   gh repo create henrypoydar/homebrew-tap --public
+#   git tag v0.1.0 && GITHUB_TOKEN=... goreleaser release --clean
+version: 2
+
+project_name: cowrite
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - arm64
+      - amd64
+    ldflags:
+      - -s -w
+
+archives:
+  - formats: [tar.gz]
+
+brews:
+  - repository:
+      owner: henrypoydar
+      name: homebrew-tap
+    homepage: https://github.com/henrypoydar/cowrite
+    description: Vim-flavored terminal markdown editor for co-writing with AI agents
+    license: MIT
+
+changelog:
+  use: git

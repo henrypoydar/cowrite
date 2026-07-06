@@ -21,13 +21,14 @@ const (
 	MotionWordEnd
 	MotionFileStart
 	MotionFileEnd
-	MotionFind        // f
-	MotionTill        // t
-	MotionLine        // whole-line target used by dd/cc/yy
-	MotionParaForward // }
-	MotionParaBack    // {
-	MotionObjWord     // iw / aw text object
-	MotionObjPara     // ip / ap text object
+	MotionFind          // f
+	MotionTill          // t
+	MotionLine          // whole-line target used by dd/cc/yy
+	MotionParaForward   // }
+	MotionParaBack      // {
+	MotionObjWord       // iw / aw text object
+	MotionObjPara       // ip / ap text object
+	MotionFirstNonBlank // ^
 )
 
 type Motion struct {
@@ -69,6 +70,16 @@ func Resolve(m Motion, l Lines, cur buffer.Pos) Target {
 		return Target{Pos: buffer.Pos{Line: min(lastLine, cur.Line+n), Col: cur.Col}, Linewise: true}
 	case MotionLineStart:
 		return Target{Pos: buffer.Pos{Line: cur.Line, Col: 0}}
+	case MotionFirstNonBlank:
+		line := l.Line(cur.Line)
+		col := 0
+		for col < len(line) && (line[col] == ' ' || line[col] == '\t') {
+			col++
+		}
+		if col == len(line) {
+			col = 0
+		}
+		return Target{Pos: buffer.Pos{Line: cur.Line, Col: col}}
 	case MotionLineEnd:
 		line := min(lastLine, cur.Line+n-1) // 2$ ends on the next line
 		return Target{Pos: buffer.Pos{Line: line, Col: len(l.Line(line))}}

@@ -11,6 +11,7 @@ const (
 	ModeCommand
 	ModeVisual
 	ModeVisualLine
+	ModeSearch
 )
 
 func (m Mode) String() string {
@@ -23,6 +24,8 @@ func (m Mode) String() string {
 		return "VISUAL"
 	case ModeVisualLine:
 		return "V-LINE"
+	case ModeSearch:
+		return "SEARCH"
 	default:
 		return "NORMAL"
 	}
@@ -66,6 +69,8 @@ const (
 	CmdExitVisual
 	CmdSelectObject // visual mode iw/ip: reshape the selection
 	CmdEx           // Text carries the command line, e.g. "wq"
+	CmdSearch       // Text carries the pattern; empty repeats the last one
+	CmdSearchNext   // n, or N when Before is set
 )
 
 // InsertAt says where CmdEnterInsert places the cursor.
@@ -116,6 +121,8 @@ func (e *Engine) Feed(k Key) []Cmd {
 		return e.command(k)
 	case ModeVisual, ModeVisualLine:
 		return e.visual(k)
+	case ModeSearch:
+		return e.search(k)
 	default:
 		return e.normal(k)
 	}
@@ -146,6 +153,8 @@ func motionKind(r rune) (MotionKind, bool) {
 		return MotionParaBack, true
 	case '}':
 		return MotionParaForward, true
+	case '^':
+		return MotionFirstNonBlank, true
 	}
 	return MotionNone, false
 }
@@ -303,6 +312,21 @@ func (e *Engine) normal(k Key) []Cmd {
 	case 'u':
 		e.reset()
 		return one(Cmd{Kind: CmdUndo})
+	case 'n':
+		e.reset()
+		return one(Cmd{Kind: CmdSearchNext})
+	case 'N':
+		e.reset()
+		return one(Cmd{Kind: CmdSearchNext, Before: true})
+	case '/':
+		if e.op != 0 {
+			e.reset()
+			return nil
+		}
+		e.reset()
+		e.mode = ModeSearch
+		e.cmdline = nil
+		return nil
 	case ':':
 		if e.op != 0 {
 			e.reset()
@@ -314,6 +338,32 @@ func (e *Engine) normal(k Key) []Cmd {
 		return nil
 	}
 	e.reset()
+	return nil
+}
+
+// search collects the pattern after /, mirroring the : command line.
+func (e *Engine) search(k Key) []Cmd {
+	switch k.Special {
+	case KeyEsc:
+		e.mode = ModeNormal
+		e.cmdline = nil
+		return nil
+	case KeyEnter:
+		pat := string(e.cmdline)
+		e.cmdline = nil
+		e.mode = ModeNormal
+		return one(Cmd{Kind: CmdSearch, Text: pat})
+	case KeyBackspace:
+		if len(e.cmdline) > 0 {
+			e.cmdline = e.cmdline[:len(e.cmdline)-1]
+		} else {
+			e.mode = ModeNormal
+		}
+		return nil
+	}
+	if k.Rune != 0 {
+		e.cmdline = append(e.cmdline, k.Rune)
+	}
 	return nil
 }
 

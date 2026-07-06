@@ -153,7 +153,7 @@ func (m *Model) statusLine() string {
 		mode = "V-LINE"
 	}
 	left := fmt.Sprintf(" %s  %s", mode, name)
-	right := fmt.Sprintf("%d:%d ", m.cursor.Line+1, m.cursor.Col+1)
+	right := fmt.Sprintf("%dw  %d:%d ", m.wordCount(), m.cursor.Line+1, m.cursor.Col+1)
 	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
 	if gap < 1 {
 		gap = 1
@@ -161,9 +161,28 @@ func (m *Model) statusLine() string {
 	return statusStyle.Render(left + strings.Repeat(" ", gap) + right)
 }
 
+func (m *Model) wordCount() int {
+	n := 0
+	for i := range m.buf.LineCount() {
+		inWord := false
+		for _, r := range m.buf.Line(i) {
+			if r == ' ' || r == '\t' {
+				inWord = false
+			} else if !inWord {
+				inWord = true
+				n++
+			}
+		}
+	}
+	return n
+}
+
 func (m *Model) messageLine() string {
-	if m.eng.Mode() == vim.ModeCommand {
+	switch m.eng.Mode() {
+	case vim.ModeCommand:
 		return ":" + m.eng.Cmdline()
+	case vim.ModeSearch:
+		return "/" + m.eng.Cmdline()
 	}
 	return m.msg
 }

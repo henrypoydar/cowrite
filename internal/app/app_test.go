@@ -9,7 +9,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/henrypoydar/cowrite/internal/buffer"
 	"github.com/henrypoydar/cowrite/internal/filesync"
+	"github.com/henrypoydar/cowrite/internal/vim"
 )
 
 func newModel(t *testing.T, content string) (*Model, string) {
@@ -286,6 +288,69 @@ func TestDotRepeat(t *testing.T) {
 	press(m, "A!\x1b.") // append '!', repeat the whole insert session
 	if got := m.buf.Contents(); got != "x!!" {
 		t.Errorf("A!.: %q", got)
+	}
+}
+
+func TestSearch(t *testing.T) {
+	m, _ := newModel(t, "alpha beta\ngamma beta\nbeta again\n")
+
+	press(m, "/beta\r")
+	if m.cursor != (buffer.Pos{Line: 0, Col: 6}) {
+		t.Errorf("/beta landed at %v", m.cursor)
+	}
+	press(m, "n")
+	if m.cursor != (buffer.Pos{Line: 1, Col: 6}) {
+		t.Errorf("n landed at %v", m.cursor)
+	}
+	press(m, "nn") // line 2, then wrap back to line 0
+	if m.cursor != (buffer.Pos{Line: 0, Col: 6}) {
+		t.Errorf("wrap landed at %v", m.cursor)
+	}
+	press(m, "N") // reverse wraps to line 2
+	if m.cursor != (buffer.Pos{Line: 2, Col: 0}) {
+		t.Errorf("N landed at %v", m.cursor)
+	}
+	press(m, "/nosuch\r")
+	if m.msg != "pattern not found: nosuch" {
+		t.Errorf("msg = %q", m.msg)
+	}
+	if m.cursor != (buffer.Pos{Line: 2, Col: 0}) {
+		t.Errorf("failed search moved the cursor to %v", m.cursor)
+	}
+	// a failed search still becomes the last pattern (as in vim), so
+	// re-seed before testing that an empty / repeats it
+	press(m, "/beta\rgg/\r")
+	if m.cursor != (buffer.Pos{Line: 0, Col: 6}) {
+		t.Errorf("empty / repeat landed at %v", m.cursor)
+	}
+}
+
+func TestFirstNonBlank(t *testing.T) {
+	m, _ := newModel(t, "   indented text\n")
+	press(m, "$^")
+	if m.cursor != (buffer.Pos{Line: 0, Col: 3}) {
+		t.Errorf("^ landed at %v", m.cursor)
+	}
+}
+
+func TestInsertArrows(t *testing.T) {
+	m, _ := newModel(t, "hello\n")
+	press(m, "A")
+	m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	press(m, "XX")
+	if got := m.buf.Lines()[0]; got != "helXXlo" {
+		t.Errorf("insert arrows: %q", got)
+	}
+	if m.eng.Mode() != vim.ModeInsert {
+		t.Errorf("arrows left insert mode: %v", m.eng.Mode())
+	}
+}
+
+func TestWordCount(t *testing.T) {
+	m, _ := newModel(t, "one two\n\nthree four five\n")
+	if got := m.wordCount(); got != 5 {
+		t.Errorf("wordCount = %d, want 5", got)
 	}
 }
 
