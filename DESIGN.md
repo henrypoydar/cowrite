@@ -81,6 +81,15 @@ model state, so there's no locking.
   debounce — an agent that reads-then-appends now merges disjointly
   (re-verified live). An agent that blindly overwrites the whole file
   still takes line 0; that's the disk-wins policy, not the race.
+- **Known edge — stale whole-file agent writes resurrect edits.** If the
+  user deletes a line and the agent then writes the *entire* file from a
+  version read before that deletion, the merge re-adds the line — on disk
+  the agent wrote last, and disk wins (verified live; it presents as "dd
+  doesn't stick"). cowrite cannot distinguish "agent deliberately restored
+  this" from "agent had stale context". The working conventions: agents
+  should re-read the file (or use targeted edits, like Claude Code's Edit
+  tool) rather than whole-file writes from memory, and `u` undoes the
+  agent's merge in one step when it happens.
 - **Cursor width is rune-based** for now; grapheme clusters and east-asian
   widths via `rivo/uniseg` are a known future fix, not a v1 blocker.
 - **Trailing newline**: files are stored with one; the buffer strips it on
