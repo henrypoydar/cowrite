@@ -100,6 +100,12 @@ model state, so there's no locking.
   routed through the existing watcher/merge is a possible later
   experiment, with the caveat that one-shot prompts lose the
   conversational session that makes a live agent pane valuable.
+- **`ctrl+[` is decoded by hand.** Ghostty (following the fixterms spec)
+  encodes `ctrl+[` as `CSI 91;5u` rather than a bare ESC byte, and Bubble
+  Tea v1 can't parse CSI-u keys — it surfaces the sequence as an unexported
+  unknown-CSI message. `app.csiEscape` matches that message by reflection
+  and decodes the fixterms and xterm-modifyOtherKeys escape encodings, so
+  `ctrl+[` leaves insert mode everywhere vim muscle memory expects it to.
 - **Cursor width is rune-based** for now; grapheme clusters and east-asian
   widths via `rivo/uniseg` are a known future fix, not a v1 blocker.
 - **Trailing newline**: files are stored with one; the buffer strips it on

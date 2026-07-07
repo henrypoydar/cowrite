@@ -473,6 +473,34 @@ func TestCursorShapePerMode(t *testing.T) {
 	}
 }
 
+// csiSeq mimics Bubble Tea's unexported unknownCSISequenceMsg: a named
+// []byte type, which csiEscape matches by reflection.
+type csiSeq []byte
+
+func TestCtrlBracketEscapes(t *testing.T) {
+	cases := []struct {
+		name string
+		seq  string
+		esc  bool
+	}{
+		{"ghostty fixterms ctrl+[", "\x1b[91;5u", true},
+		{"kitty esc key", "\x1b[27u", true},
+		{"xterm modifyOtherKeys ctrl+[", "\x1b[27;5;91~", true},
+		{"plain [ csi-u, no ctrl", "\x1b[91;1u", false},
+		{"unrelated tilde seq", "\x1b[3;5~", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m, _ := newModel(t, "hello\n")
+			press(m, "i")
+			m.Update(csiSeq(c.seq))
+			if gotEsc := m.eng.Mode() == vim.ModeNormal; gotEsc != c.esc {
+				t.Errorf("mode = %v after %q, want escape=%v", m.eng.Mode(), c.seq, c.esc)
+			}
+		})
+	}
+}
+
 var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 func TestViewRenders(t *testing.T) {

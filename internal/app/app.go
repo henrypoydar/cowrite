@@ -6,7 +6,9 @@ package app
 import (
 	"fmt"
 	"os"
+	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -159,7 +161,46 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if csiEscape(msg) {
+		return m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	}
 	return m, nil
+}
+
+// csiEscape reports whether msg is an unrecognized CSI key sequence meaning
+// Escape. Some terminals (Ghostty, per the fixterms spec) encode ctrl+[ as
+// "CSI 91;5u" instead of a bare ESC byte so the two are distinguishable;
+// Bubble Tea v1 can't parse CSI-u keys and surfaces the sequence only as an
+// unexported unknown-sequence message, so we match its []byte shape by
+// reflection and decode it ourselves.
+func csiEscape(msg tea.Msg) bool {
+	v := reflect.ValueOf(msg)
+	if !v.IsValid() || v.Kind() != reflect.Slice || v.Type().Elem().Kind() != reflect.Uint8 {
+		return false
+	}
+	s := string(v.Bytes())
+	if !strings.HasPrefix(s, "\x1b[") || len(s) < 4 {
+		return false
+	}
+	params := strings.Split(s[2:len(s)-1], ";")
+	num := func(i int) int {
+		if i >= len(params) {
+			return 0
+		}
+		n, err := strconv.Atoi(params[i])
+		if err != nil {
+			return -1
+		}
+		return n
+	}
+	ctrl := func(mods int) bool { return mods > 0 && (mods-1)&4 != 0 }
+	switch s[len(s)-1] {
+	case 'u': // fixterms / kitty: CSI code;mods u
+		return num(0) == 27 || (num(0) == 91 && ctrl(num(1)))
+	case '~': // xterm modifyOtherKeys: CSI 27;mods;code ~
+		return num(0) == 27 && (num(2) == 27 || (num(2) == 91 && ctrl(num(1))))
+	}
+	return false
 }
 
 // crashSave is the last line of defense: if editing code panics, flush the
