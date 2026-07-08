@@ -242,7 +242,8 @@ func (m *Model) insertArrow(t tea.KeyType) bool {
 }
 
 // translate decodes a terminal key event into engine keys. Arrow keys act
-// as motions in normal mode and are ignored elsewhere (for now).
+// as h/j/k/l motions in normal and visual modes; insert mode handles them
+// separately (insertArrow), and command/search modes ignore them.
 func translate(msg tea.KeyMsg, mode vim.Mode) []vim.Key {
 	switch msg.Type {
 	case tea.KeyEsc:
@@ -261,7 +262,7 @@ func translate(msg tea.KeyMsg, mode vim.Mode) []vim.Key {
 		}
 		return nil
 	case tea.KeyUp, tea.KeyDown, tea.KeyLeft, tea.KeyRight:
-		if mode != vim.ModeNormal {
+		if mode != vim.ModeNormal && mode != vim.ModeVisual && mode != vim.ModeVisualLine {
 			return nil
 		}
 		r := map[tea.KeyType]rune{
