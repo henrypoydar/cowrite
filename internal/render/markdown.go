@@ -19,6 +19,7 @@ const (
 	SCode          // `inline` and fenced block contents
 	SQuote         // blockquote text
 	SComment       // frontmatter and %% comments %% — metadata, not prose
+	SLink          // a link's readable part: [label], a bare URL, or <autolink>
 )
 
 // Decorate computes a style for every rune of every line.
@@ -175,6 +176,14 @@ func inline(line []rune, st []Style) {
 			i++
 			continue
 		}
+		if j := linkSpan(line, st, i); j != -1 {
+			i = j
+			continue
+		}
+		if j := urlSpan(line, st, i); j != -1 {
+			i = j
+			continue
+		}
 		switch line[i] {
 		case '`':
 			if j := findPlain(line, st, "`", i+1); j != -1 {
@@ -207,6 +216,113 @@ func inline(line []rune, st []Style) {
 		}
 		i++
 	}
+}
+
+// linkSpan styles an inline [label](url) — or image ![alt](url) — beginning
+// at i. The label reads as the link; the brackets, parens, URL, and any image
+// bang recede as markers. Returns the index just past ')', or -1.
+func linkSpan(line []rune, st []Style, i int) int {
+	if line[i] != '[' {
+		return -1
+	}
+	rbrack := findPlain(line, st, "]", i+1)
+	if rbrack == -1 || rbrack+1 >= len(line) || line[rbrack+1] != '(' {
+		return -1
+	}
+	rparen := findPlain(line, st, ")", rbrack+2)
+	if rparen == -1 {
+		return -1
+	}
+	if i > 0 && line[i-1] == '!' && st[i-1] == SText {
+		st[i-1] = SMarker // image bang
+	}
+	st[i], st[rbrack] = SMarker, SMarker // [ ]
+	for k := i + 1; k < rbrack; k++ {    // label
+		st[k] = SLink
+	}
+	for k := rbrack + 1; k <= rparen; k++ { // (url)
+		st[k] = SMarker
+	}
+	return rparen + 1
+}
+
+// urlSpan styles a bare or angle-bracketed URL beginning at i. A bare URL
+// (http/https scheme at a word boundary) runs to whitespace, dropping any
+// trailing sentence punctuation; an <angle> URL runs to its '>'. Returns the
+// index just past the URL, or -1.
+func urlSpan(line []rune, st []Style, i int) int {
+	if line[i] == '<' {
+		if !hasScheme(line, i+1) {
+			return -1
+		}
+		gt := findPlain(line, st, ">", i+1)
+		if gt == -1 {
+			return -1
+		}
+		st[i], st[gt] = SMarker, SMarker
+		for k := i + 1; k < gt; k++ {
+			st[k] = SLink
+		}
+		return gt + 1
+	}
+	if !hasScheme(line, i) || (i > 0 && !isURLBoundary(line[i-1])) {
+		return -1
+	}
+	j := i
+	for j < len(line) && st[j] == SText && !isURLStop(line[j]) {
+		j++
+	}
+	for j > i+1 && isTrailPunct(line[j-1]) {
+		j--
+	}
+	for k := i; k < j; k++ {
+		st[k] = SLink
+	}
+	return j
+}
+
+func hasScheme(line []rune, i int) bool {
+	for _, s := range [...]string{"https://", "http://"} {
+		r := []rune(s)
+		if i+len(r) > len(line) {
+			continue
+		}
+		ok := true
+		for k := range r {
+			if line[i+k] != r[k] {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
+}
+
+func isURLBoundary(r rune) bool {
+	switch r {
+	case ' ', '\t', '(', '<', '"', '\'':
+		return true
+	}
+	return false
+}
+
+func isURLStop(r rune) bool {
+	switch r {
+	case ' ', '\t', '<', '>', ')', ']', '"', '\'', '`':
+		return true
+	}
+	return false
+}
+
+func isTrailPunct(r rune) bool {
+	switch r {
+	case '.', ',', ';', ':', '!', '?':
+		return true
+	}
+	return false
 }
 
 // findPlain locates delim starting at or after from, over runes still

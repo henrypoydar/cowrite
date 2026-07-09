@@ -33,6 +33,7 @@ var (
 		render.SCode:    lipgloss.NewStyle().Foreground(lipgloss.Color("3")),
 		render.SQuote:   lipgloss.NewStyle().Italic(true).Faint(true),
 		render.SComment: lipgloss.NewStyle().Faint(true),
+		render.SLink:    lipgloss.NewStyle().Foreground(lipgloss.Color("4")).Underline(true),
 	}
 )
 

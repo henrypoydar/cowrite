@@ -14,7 +14,7 @@ func deco(t *testing.T, doc string, line int) string {
 	styles := Decorate(buffer.New(doc))
 	letters := map[Style]byte{
 		SText: 't', SHeading: 'H', SMarker: 'm', SStrong: 'S',
-		SEmph: 'E', SCode: 'C', SQuote: 'Q', SComment: 'x',
+		SEmph: 'E', SCode: 'C', SQuote: 'Q', SComment: 'x', SLink: 'L',
 	}
 	var b strings.Builder
 	for _, s := range styles[line] {
@@ -39,6 +39,14 @@ func TestDecorate(t *testing.T) {
 		{"emphasis", "a *b* c\n", 0, "ttmEmtt"},
 		{"underscore emphasis", "_hi_\n", 0, "mEEm"},
 		{"inline code", "x `y` z\n", 0, "ttmCmtt"},
+		// links
+		{"inline link", "[go](http://x)\n", 0, "mLLmmmmmmmmmmm"},
+		{"image link", "![alt](y)\n", 0, "mmLLLmmmm"},
+		{"bare url", "see http://x.com\n", 0, "ttttLLLLLLLLLLLL"},
+		{"bare url drops trailing dot", "go http://x.\n", 0, "tttLLLLLLLLt"},
+		{"angle autolink", "<https://x>\n", 0, "mLLLLLLLLLm"},
+		{"link label not emphasized", "[a_b](u)\n", 0, "mLLLmmmm"},
+		{"link inside list", "- [a](b)\n", 0, "mmmLmmmm"},
 		{"unclosed emphasis stays text", "3 * 4\n", 0, "ttttt"},
 		{"emphasis inside list", "- *hi*\n", 0, "mmmEEm"},
 		{"fence line", "```go\ncode here\n```\n", 0, "mmmmm"},
