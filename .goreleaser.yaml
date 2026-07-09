@@ -21,13 +21,22 @@ builds:
 archives:
   - formats: [tar.gz]
 
-brews:
+# goreleaser dropped Homebrew formulas (brews) for casks; a cask ships the
+# prebuilt binary rather than building from source.
+homebrew_casks:
   - repository:
       owner: henrypoydar
       name: homebrew-tap
     homepage: https://github.com/henrypoydar/cowrite
     description: Vim-flavored terminal markdown editor for co-writing with AI agents
-    license: MIT
+    # The binary is unsigned, so Gatekeeper quarantines it on download; strip
+    # the attribute post-install so `cowrite` runs without a security prompt.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/cowrite"]
+          end
 
 changelog:
   use: git
