@@ -6,7 +6,9 @@ package app
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"reflect"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -474,7 +476,8 @@ func (m *Model) operate(c vim.Cmd) tea.Cmd {
 	if c.Kind == vim.CmdYank {
 		m.cursor = m.clampNormal(start)
 		m.setGoal()
-		return nil
+		m.msg = "copied to clipboard"
+		return clipboardCmd(m.reg.text)
 	}
 	if c.Kind == vim.CmdChange {
 		// linewise change clears the lines but keeps one to type into
@@ -493,6 +496,39 @@ func (m *Model) operate(c vim.Cmd) tea.Cmd {
 	}
 	m.setGoal()
 	return m.edited()
+}
+
+// clipboardCmd copies yanked text to the system clipboard off the update
+// loop, so `y` works like a real copy. (The terminal delivers Cmd-C as a
+// bare `c`, indistinguishable from the change operator, so yank is the only
+// way to reach the clipboard.)
+func clipboardCmd(text string) tea.Cmd {
+	return func() tea.Msg {
+		copyToClipboard(text)
+		return nil
+	}
+}
+
+// copyToClipboard is best-effort: a missing tool (e.g. a headless box)
+// is silently ignored — the internal register still holds the text.
+func copyToClipboard(text string) {
+	var name string
+	var args []string
+	switch runtime.GOOS {
+	case "darwin":
+		name = "pbcopy"
+	case "linux":
+		if _, err := exec.LookPath("wl-copy"); err == nil {
+			name = "wl-copy"
+		} else {
+			name, args = "xclip", []string{"-selection", "clipboard"}
+		}
+	default:
+		return
+	}
+	cmd := exec.Command(name, args...)
+	cmd.Stdin = strings.NewReader(text)
+	_ = cmd.Run()
 }
 
 // join splices the next line onto the current one, vim J style: newline
